@@ -29,6 +29,23 @@ export async function perceive(page, { maxText = 2500, maxRevealers = 150, maxLi
           .trim()
           .slice(0, 100);
 
+      // Nearest preceding heading — gives the AI human-like context for judging a
+      // control ("this button sits under 'Installation'"). Bounded walk.
+      const nearestHeading = (el) => {
+        let n = el;
+        for (let hops = 0; n && hops < 6; hops++, n = n.parentElement) {
+          let p = n.previousElementSibling;
+          let scans = 0;
+          while (p && scans++ < 10) {
+            if (/^H[1-6]$/.test(p.tagName)) return (p.innerText || '').trim().slice(0, 80);
+            const h = p.querySelector && p.querySelector('h1,h2,h3,h4,h5,h6');
+            if (h) return (h.innerText || '').trim().slice(0, 80);
+            p = p.previousElementSibling;
+          }
+        }
+        return '';
+      };
+
       // ---- pick the main content container (densest text) ------------------
       const CONTENT_CANDIDATES = [
         'main article', 'article', 'main', '[role=main]',
@@ -139,22 +156,24 @@ export async function perceive(page, { maxText = 2500, maxRevealers = 150, maxLi
         else if (role === 'tab' || ariaSelected != null || ariaPressed != null || /(^|\s|-)tab(\s|-|$)/i.test(cls)) kind = 'tab';
         else if (ariaExpanded != null || ariaControls || tag === 'summary' || tag === 'details' || /accordion|collaps|expand|disclosure/i.test(cls)) kind = 'expander';
 
-        // Skip pure UI actions (copy/share/feedback/…) that reveal no content.
-        if (kind === 'control' && NON_CONTENT.test(label)) continue;
+        // Pure UI actions (copy/share/print/feedback/…) never reveal content —
+        // drop them deterministically so neither the AI nor the fallback wastes a
+        // click. This is universal (not per-site), so it stays a hard filter.
+        if (NON_CONTENT.test(label)) continue;
 
-        // A generic button with no disclosure semantics (no tab/accordion/aria,
-        // no "show more"/"toggle API" label) is almost always a LIVE DEMO widget
-        // embedded in component docs — date-picker days, colour sliders, rating
-        // stars, carousels, steppers. Clicking it manipulates an example, it does
-        // not reveal documentation, and on dense pages it burns the whole action
-        // budget. Only keep it when its label clearly promises more content.
+        // Heuristic guess "this likely reveals content", used ONLY as the FALLBACK
+        // when the AI triage (aiSelectRevealers) is unavailable. The AI is the
+        // primary judge — it can approve a generic/unlabelled control hiding
+        // content in an improbable place that this regex would miss, and reject a
+        // live-demo widget (date-picker/slider/stepper) the regex can't tell apart.
+        // So we now KEEP every interactive candidate and let the model decide.
         const DISCLOSURE_LABEL =
           /\b(show|view|see|load|read|expand)\b[^.]{0,20}\b(more|all|less|api|details?|code|example|source|reference)\b|toggle|inline api|reveal|full (?:api|list)/i;
-        if (kind === 'control' && !DISCLOSURE_LABEL.test(label)) continue;
+        const heuristic = kind !== 'control' || DISCLOSURE_LABEL.test(label);
 
         const signature = `${role}|${label}|${ariaControls}|${kind}`;
         el.setAttribute('data-docdna-id', String(rid));
-        revealers.push({ id: rid, kind, label, role, signature });
+        revealers.push({ id: rid, kind, label, role, cls: cls.slice(0, 60), context: nearestHeading(el), heuristic, signature });
         rid++;
       }
 

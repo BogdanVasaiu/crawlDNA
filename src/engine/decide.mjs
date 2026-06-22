@@ -72,6 +72,144 @@ function sectionize(markdown) {
 }
 
 /**
+ * Interpret the natural-language task into explicit, faithful OUTPUT DIRECTIVES
+ * the rest of the pipeline can enforce deterministically. Today this covers the
+ * element-type EXCLUSIONS a user can state in plain English ("don't include
+ * images", "strip the links"): removing a whole media/link element is
+ * verbatim-safe — it drops an element, it never rewrites prose — unlike content
+ * scoping, which is judged per-section in aiScopeContent and cannot reach an
+ * image embedded inside an otherwise-relevant section.
+ *
+ * The AI is the primary interpreter (no per-site assumptions about meaning); a
+ * narrow deterministic backstop guarantees the most common, unambiguous
+ * phrasings are honoured even when the model is unavailable or hedges — the user
+ * ranks precision (actually honouring the instruction) above everything. The
+ * backstop is NOT a content value-filter or a URL-shape rule (those stay fully
+ * AI-judged); it only recognises an explicit "no <images|links>" request.
+ *
+ * It also detects an opt-in output TRANSFORM: a shape the task explicitly asks
+ * the content to be presented in ("as a table", "as a list", "as JSON"). This is
+ * the ONE place the verbatim rule is relaxed, and only on explicit request —
+ * default is null (verbatim). The reshape itself (aiReformat) stays grounded:
+ * it reshapes only the provided content and never invents or drops values.
+ *
+ * NOTE: how content is GROUPED INTO FILES (separate files, images vs text,
+ * "images with their captions", per-page, by category, …) is NOT handled here —
+ * that is the job of the general layout router (`aiLayoutScheme` decides the file
+ * plan, `aiRouteBlocks` routes each page's blocks into it; driven by `planFiles`
+ * in layout.mjs). Keeping that out of here is deliberate: file layout is
+ * open-ended ("the task may be infinite"), so it must be judged against the
+ * content, not pre-enumerated into fixed directive types.
+ *
+ * @returns {Promise<{ exclude: { images: boolean, links: boolean }, transform: null | { shape: string } }>}
+ */
+export async function aiInterpretTask({ model, task, host }) {
+  const directives = { exclude: { images: false, links: false }, transform: null };
+  const t = (task || '').trim();
+  if (!t) return directives;
+
+  const ans = await chat(
+    model,
+    'You convert a web-extraction task into a tiny JSON of explicit output ' +
+      'directives. Report ONLY what the user EXPLICITLY asks for.\n' +
+      '- exclude.images=true ONLY when the task asks to leave images OUT entirely ' +
+      '(e.g. "no images", "without images", "remove/omit/exclude images", ' +
+      '"don\'t include images"). Covers images/pictures/photos/figures/screenshots/' +
+      'icons/logos. NOTE: asking to put images in a SEPARATE FILE is NOT an ' +
+      'exclusion (the images are kept) — leave this false for that.\n' +
+      '- exclude.links=true ONLY when the task asks to leave hyperlinks/URLs OUT ' +
+      'entirely.\n' +
+      '- transform: set {"shape":"..."} ONLY when the task explicitly asks to ' +
+      'PRESENT the content in a specific structure/format (e.g. "as a table", ' +
+      '"in a table", "as a list", "as bullet points", "as JSON"); put a short ' +
+      'description of that shape in "shape". Otherwise transform=null.\n' +
+      'Never infer from the topic alone — "extract the images" or "get the links" ' +
+      'are NOT exclusions, and tabular-looking data is NOT a transform unless ' +
+      'explicitly requested. Answer with JSON only.',
+    `Task: "${t}"\n\nReply with {"exclude":{"images":bool,"links":bool},"transform":null|{"shape":"..."}}.`,
+    host,
+  ).catch(() => '');
+  const j = parseJson(ans);
+  const aiImg = !!(j && j.exclude && j.exclude.images === true);
+  const aiLink = !!(j && j.exclude && j.exclude.links === true);
+  if (j && j.transform && typeof j.transform === 'object' && typeof j.transform.shape === 'string' && j.transform.shape.trim()) {
+    directives.transform = { shape: j.transform.shape.trim().slice(0, 120) };
+  }
+
+  // Deterministic exclusion signal: an exclusion VERB closely followed by the
+  // media/link noun. Conservative (the negation is required) so "extract the
+  // images" never matches.
+  const excludeNear = (noun) =>
+    new RegExp(
+      "(?:\\bno\\b|without|exclude|exclud\\w*|omit\\w*|skip\\w*|drop\\w*|remove\\w*|" +
+        "strip\\w*|ignore\\w*|leave out|leaving out|don'?t (?:include|want)|" +
+        "do not (?:include|want))[^.\\n]{0,30}?\\b(?:" + noun + ")\\b",
+      'i',
+    );
+  const imgVerb = excludeNear('images?|imgs?|pictures?|photos?|photographs?|figures?|screenshots?|graphics?|illustrations?|icons?|logos?').test(t);
+  const linkVerb = excludeNear('links?|hyperlinks?|urls?|hrefs?|anchors?').test(t);
+
+  // Excluding loses content, so bias toward KEEPING (the user ranks completeness
+  // above all): an explicit exclusion verb always wins, but a bare AI "exclude"
+  // is trusted only when the task is NOT clearly doing file layout. Layout cues
+  // ("separate", "own file", "in X.md", "with their …") mean the content is being
+  // FILED, not removed — the general router handles those, not exclusion.
+  const layoutCue = /\bseparat\w*\b|\bown file\b|\b(?:its|their)\s+own\b|\bwith (?:their|its)\b|\bgroup\b|\.md\b/i.test(t);
+  directives.exclude.images = imgVerb || (aiImg && !layoutCue);
+  directives.exclude.links = linkVerb || (aiLink && !layoutCue);
+
+  // Sanity gate: never exclude something the task never named. The model can
+  // hallucinate an exclusion for a noun absent from the task (e.g. flag links on
+  // an images-only request); requiring an explicit mention contains that.
+  const mentions = (noun) => new RegExp('\\b(?:' + noun + ')\\b', 'i').test(t);
+  if (!mentions('images?|imgs?|pictures?|photos?|photographs?|figures?|screenshots?|graphics?|illustrations?|icons?|logos?|visuals?|media'))
+    directives.exclude.images = false;
+  if (!mentions('links?|hyperlinks?|urls?|hrefs?|anchors?')) directives.exclude.links = false;
+
+  return directives;
+}
+
+/**
+ * Reshape already-extracted content into the task's requested output shape (from
+ * aiInterpretTask's transform). GROUNDED and self-targeting: it uses only the
+ * given content (never invents/drops a value, keeps every number/string exact),
+ * and leaves content that does not fit the shape unchanged — so a "prices as a
+ * table" task tables the price data and passes prose through verbatim. On any
+ * failure or empty reply it returns the input unchanged (no data loss).
+ *
+ * @param {object} a
+ * @param {string} a.shape   e.g. "a Markdown table", "a bulleted list"
+ * @param {string} a.markdown content to reshape
+ * @returns {Promise<string>}
+ */
+export async function aiReformat({ model, task, shape, markdown, host }) {
+  const src = String(markdown || '');
+  if (!src.trim() || !shape) return src;
+
+  const ans = await chat(
+    model,
+    'You reformat ALREADY-EXTRACTED web content into a requested output shape for a ' +
+      'user task. Apply the shape ONLY to content that genuinely fits it (repeated ' +
+      'records with consistent fields → a Markdown table; a set of items → a list). ' +
+      'If a piece of content does not fit the requested shape (narrative prose, ' +
+      'headings, unrelated sections), leave THAT content unchanged. ' +
+      'STRICT FAITHFULNESS: use ONLY the provided content — never invent, add, infer, ' +
+      'or omit any value; keep every name, number, price and string EXACTLY as ' +
+      'written (reordering rows to fill a table is allowed; changing values is NOT). ' +
+      'Output ONLY the resulting Markdown — no preamble, no explanation, and do not ' +
+      'wrap the whole answer in a code fence.',
+    `Task: "${task}"\nRequested output shape: ${shape}\n\nContent:\n\n${src}`,
+    host,
+  ).catch(() => '');
+
+  let out = (ans || '').trim();
+  // Unwrap an accidental whole-output code fence (```markdown … ```).
+  const fence = out.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/i);
+  if (fence) out = fence[1].trim();
+  return out || src;
+}
+
+/**
  * Keep only task-relevant sections, verbatim.
  * @returns {Promise<{ markdown: string, relevant: boolean }>}
  */
@@ -161,62 +299,171 @@ export async function aiSelectLinks({ model, task, links, host }) {
 }
 
 /**
- * Decide how the extracted content is grouped into output files. The model only
- * chooses the grouping; the text itself stays verbatim (assembled in
- * lib/layout.mjs). It picks ONE of three layouts:
- *   - SINGLE FILE  (the default) — everything in one .md.
- *   - PER PAGE     — one .md per crawled page/source ("by pages", "each page
- *     separately"). Returned as { perPage: true }; layout.mjs builds the files
- *     deterministically (lossless, named from each page), so the model never has
- *     to enumerate them.
- *   - CUSTOM GROUPS — split by category/topic ("drinks and pizzas separately").
- *     Returned as { files: [{ filename, items }] } over the given item indexes.
+ * Decide which interactive controls on a page actually HIDE content worth
+ * revealing — the AI-driven core of discovery. The model reads each candidate
+ * (label, kind, class, nearby heading) like a human and judges whether clicking
+ * it would surface currently-hidden readable content (tabs, accordions, "show
+ * more", variant switches), versus controls that reveal nothing (copy/share,
+ * theme toggles, live-demo widgets, plain navigation). This is what lets the
+ * crawler find content in non-obvious places on ANY site without per-site rules.
+ *
+ * Completeness-biased: "when unsure, include". Returns a Set of the chosen
+ * candidates' `signature`s, or null on parse failure so the caller can fall back
+ * to the deterministic heuristic (no missed content if the model is down).
  *
  * @param {object} a
- * @param {string} a.model
- * @param {string} a.task
- * @param {Array<{index:number, source:string, heading:string, preview:string}>} a.items
- * @returns {Promise<{ perPage: true } | { files: Array<{ filename: string, items: number[] }> } | null>}
+ * @param {Array<{signature:string, kind:string, label:string, cls?:string, context?:string}>} a.candidates
+ * @returns {Promise<Set<string>|null>}
  */
-export async function aiPlanLayout({ model, task, items, host }) {
-  if (!items || items.length === 0) return null;
+export async function aiSelectRevealers({ model, task, candidates, host }) {
+  const list = (candidates || []).slice(0, 150);
+  if (list.length === 0) return new Set();
 
-  const list = items
+  const lines = list
     .map(
-      (it) =>
-        `${it.index}: [${(it.source || '').slice(0, 80)}] ${(it.heading || '').slice(0, 80)}` +
-        (it.preview ? ` — ${it.preview}` : ''),
+      (c, i) =>
+        `${i}: [${c.kind || 'control'}] "${(c.label || '(no label)').slice(0, 80)}"` +
+        (c.cls ? ` .${c.cls}` : '') +
+        (c.context ? ` — under "${c.context}"` : ''),
     )
     .join('\n');
 
   const ans = await chat(
     model,
-    'You organise already-extracted web content into output Markdown files for a user task. ' +
-      'Choose EXACTLY ONE of three layouts:\n' +
-      '1) SINGLE FILE — the DEFAULT. Put everything in one file. Use this unless the task clearly ' +
-      'asks otherwise.\n' +
-      '2) ONE FILE PER PAGE — when the task wants each crawled page kept separate, e.g. "by pages", ' +
-      '"per page", "each page separately", "one file per page", "page by page", "split the pages", ' +
-      '"a file for each page". In this case reply with {"perPage": true} and NOTHING else — the ' +
-      'crawler will create one file per source page automatically (you must NOT enumerate them).\n' +
-      '3) CUSTOM GROUPS — when the task asks to separate by CATEGORY/topic (e.g. "drinks and pizzas ' +
-      'separately", "group by feature", "one file per product"), or to split ONE thing off "from ' +
-      'the rest" (e.g. "separate the FAQ from the rest", "put the contact info in its own file"). ' +
-      'Reply with {"files":[{"filename":"name.md","items":[indexes]}]}. You MUST cover ALL items: ' +
-      'assign EVERY index to exactly ONE file (never list an index twice, never drop one). When the ' +
-      'task pulls one thing out "from the rest", make a file for that thing AND a second file ' +
-      'containing every remaining index (name it for what it holds, e.g. faq.md + other.md). Use ' +
-      'short, lowercase, descriptive filenames ending in ".md" (e.g. menu.md, drinks.md, pizzas.md).\n' +
-      'Answer with JSON only.',
-    `Task: "${task}"\n\nItems (index: [source] heading — preview):\n${list}\n\n` +
-      'Reply with ONE of: {"perPage": true}  |  {"files":[{"filename":"name.md","items":[indexes]}]}. ' +
-      'For the default single-file case, return exactly one file whose items list every index.',
+    'You are reading a web page like a human in order to extract ALL of its content, ' +
+      'including content that stays hidden until you interact. You are given the ' +
+      'interactive controls found in the main content area. Decide which ones, WHEN ' +
+      'CLICKED, would reveal additional readable content that is currently hidden — ' +
+      'e.g. tabs that swap in different text/code, accordions and expanders, ' +
+      '"show more"/"read more"/"load more"/"see details", version or platform or ' +
+      'variant switchers. Do NOT pick controls that reveal no new text: ' +
+      'copy/share/print buttons, theme or dark-mode toggles, pure interactive demos ' +
+      'or playgrounds (date pickers, sliders, colour pickers, steppers, rating stars, ' +
+      'carousels of the same widget), cookie notices, or plain links/navigation. ' +
+      'When you are unsure whether a control reveals hidden content, INCLUDE it — ' +
+      'missing content is far worse than one wasted click. Answer with JSON only.',
+    `Task (for context only — reveal everything regardless): "${task || ''}"\n\n` +
+      `Controls (index: [kind] "label" .class — context):\n${lines}\n\n` +
+      'Reply with {"click":[indexes of controls that reveal hidden content]}.',
     host,
   ).catch(() => '');
 
   const j = parseJson(ans);
-  if (!j) return null;
+  if (!j || !Array.isArray(j.click)) return null; // signal: use the fallback
+  const keep = new Set(j.click.map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n < list.length));
+  return new Set([...keep].map((i) => list[i].signature));
+}
+
+/**
+ * STEP 1 of the general layout — decide the output FILE PLAN from the task alone
+ * (no content), so it stays small and reliable no matter how big the crawl is.
+ * Returns one of:
+ *   - { single: true }                 — everything in one file (the default)
+ *   - { perPage: true }                — one file per crawled page
+ *   - { files: [{ filename, role, rule }] } — a named file plan, where role is:
+ *       "match"      → holds specific content described by `rule`
+ *       "all"        → holds EVERYTHING (every block), e.g. "the rest in ext.md
+ *                      but it will include the images anyway" → ext.md is "all"
+ *       "complement" → holds "the rest" = everything NOT claimed by match files
+ *
+ * Splitting the decision this way is what makes layout scale: "all"/"complement"
+ * files are filled deterministically by the caller (never dropped), and only the
+ * "match" files need per-page AI routing (aiRouteBlocks).
+ */
+export async function aiLayoutScheme({ model, task, host }) {
+  const t = (task || '').trim();
+  if (!t) return { single: true };
+
+  const ans = await chat(
+    model,
+    'You plan the OUTPUT FILES for a web-extraction task — the file PLAN only, not ' +
+      'the content. Reply with ONE of:\n' +
+      '- {"single": true} — everything in ONE file. This is the DEFAULT; use it unless ' +
+      'the task clearly asks to split/separate content into more than one file.\n' +
+      '- {"perPage": true} — one file per crawled page ("by pages", "per page", "each ' +
+      'page separately").\n' +
+      '- {"files":[{"filename":"name.md","role":"match|all|complement","rule":"..."}]} ' +
+      'when the task asks for specific files. For each file:\n' +
+      '   role "match" — it holds specific content described by "rule" (e.g. "images ' +
+      'together with their titles and descriptions", "the drinks", "the FAQ").\n' +
+      '   role "all" — it holds EVERYTHING, every block, the full content. Use this ' +
+      'when a file should contain all the content INCLUDING things also placed in ' +
+      'another file (e.g. "the rest in ext.md but it will include the images anyway", ' +
+      '"a full copy in all.md").\n' +
+      '   role "complement" — it holds "the rest" = everything NOT placed in the ' +
+      '"match" files. Use this ONLY when the remaining file should EXCLUDE what the ' +
+      'match files took (e.g. "the FAQ in faq.md and everything else in other.md").\n' +
+      'Use the EXACT filenames the task names. Answer with JSON only.',
+    `Task: "${t}"\n\nReply with {"single":true} | {"perPage":true} | ` +
+      '{"files":[{"filename":"name.md","role":"match|all|complement","rule":"..."}]}.',
+    host,
+  ).catch(() => '');
+
+  const j = parseJson(ans);
+  if (!j) return { single: true };
   if (j.perPage === true) return { perPage: true };
-  if (Array.isArray(j.files)) return { files: j.files };
-  return null;
+  if (Array.isArray(j.files) && j.files.length) {
+    const files = j.files
+      .filter((f) => f && typeof f.filename === 'string' && f.filename.trim())
+      .map((f) => ({
+        filename: f.filename.trim().slice(0, 80),
+        role: ['match', 'all', 'complement'].includes(f.role) ? f.role : 'match',
+        rule: typeof f.rule === 'string' ? f.rule.slice(0, 200) : '',
+      }));
+    if (files.length) return { files };
+  }
+  return { single: true };
+}
+
+/**
+ * STEP 2 of the general layout — for ONE page, assign its blocks to the "match"
+ * files of the plan (per each file's rule). Small prompt (one page at a time) so
+ * it stays reliable on large sites. A block may go to several files; blocks that
+ * match nothing are simply omitted here (the caller routes them via the
+ * all/complement files or an "other" bucket, so nothing is lost).
+ *
+ * @param {object} a
+ * @param {Array<{filename:string, rule:string}>} a.files  the match files
+ * @param {Array<{index:number, type:string, hasImage:boolean, preview:string}>} a.blocks
+ * @returns {Promise<Record<string, number[]>>}  filename -> block indexes
+ */
+export async function aiRouteBlocks({ model, task, files, blocks, host }) {
+  if (!files || !files.length || !blocks || !blocks.length) return {};
+
+  const fileList = files.map((f) => `- ${f.filename}: ${f.rule || '(matching content)'}`).join('\n');
+  const blockList = blocks
+    .map((b) => `${b.index}: [${b.type || 'text'}${b.hasImage ? '+img' : ''}] ${(b.preview || '').slice(0, 140)}`)
+    .join('\n');
+
+  const ans = await chat(
+    model,
+    'You assign a page\'s content blocks to output file(s), STRICTLY following each ' +
+      'file\'s RULE. You are given the target files (each with a rule) and the page ' +
+      'BLOCKS in document order. For EACH file, list the indexes of the blocks that ' +
+      'satisfy its rule — include EXACTLY what the rule asks for and NOTHING MORE. A ' +
+      'block may go to more than one file.\n' +
+      'Guidance for image rules: an image\'s TITLE is the short heading that names it ' +
+      '(the image\'s own alt text also serves as its title). So a rule like "images ' +
+      'with their titles" means each image block PLUS at most the ONE heading that ' +
+      'titles it — do NOT pull in surrounding paragraphs, lists, or whole sections. ' +
+      'Include descriptions / body text / captions ONLY when the rule explicitly says ' +
+      'so (e.g. "with their descriptions", "with their text"). Use document order to ' +
+      'pair an image with its title.\n' +
+      'Blocks that satisfy no file\'s rule may be omitted. Answer with JSON only.',
+    `Task: "${task}"\n\nFiles:\n${fileList}\n\nBlocks (index: [type] preview):\n${blockList}\n\n` +
+      'Reply with {"files":[{"filename":"name.md","items":[indexes]}]}.',
+    host,
+  ).catch(() => '');
+
+  const j = parseJson(ans);
+  const out = {};
+  if (j && Array.isArray(j.files)) {
+    for (const pf of j.files) {
+      if (!pf || typeof pf.filename !== 'string') continue;
+      out[pf.filename.trim()] = (Array.isArray(pf.items) ? pf.items : [])
+        .map(Number)
+        .filter((n) => Number.isInteger(n));
+    }
+  }
+  return out;
 }

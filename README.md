@@ -18,6 +18,10 @@ It runs three ways from a single headless core:
 2. **Web UI** — a control panel to set links/tasks, run, and watch live.
 3. **Importable library** — another Node project imports it and consumes results.
 
+> 📐 **How it works:** see [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full
+> pipeline — the AI-driven reveal engine, the task/directive model, and output
+> layout.
+
 ## Install
 
 Standalone:

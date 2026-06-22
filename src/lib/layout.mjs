@@ -9,32 +9,31 @@
 // the first file so the output is always complete.
 
 import { slug } from './url.mjs';
-import { aiPlanLayout } from '../engine/decide.mjs';
+import { splitBlocks } from '../extract.mjs';
+import { aiLayoutScheme, aiRouteBlocks, aiReformat } from '../engine/decide.mjs';
 
-// Above this many units we don't ask the model to group (the prompt would be
-// huge and unreliable); we consolidate into a single file instead.
-const UNIT_CAP = 150;
+// Above this many BLOCKS we stop asking the model to route per page and just
+// consolidate into a single file (a safety valve; routing is per-page so this is
+// rarely hit).
+const UNIT_CAP = 4000;
 
-/** Split markdown into heading-delimited sections (verbatim text preserved). */
-function splitSections(markdown) {
-  const lines = String(markdown || '').split('\n');
-  const sections = [];
-  let cur = { heading: '', lines: [] };
-  let inFence = false;
-  for (const line of lines) {
-    if (/^\s*(```|~~~)/.test(line)) inFence = !inFence;
-    const h = !inFence && line.match(/^(#{1,3})\s+(.*)/);
-    if (h) {
-      if (cur.lines.length) sections.push(cur);
-      cur = { heading: h[2].trim().slice(0, 100), lines: [line] };
-    } else {
-      cur.lines.push(line);
-    }
-  }
-  if (cur.lines.length) sections.push(cur);
-  return sections
-    .map((s) => ({ heading: s.heading, text: s.lines.join('\n').trim() }))
-    .filter((s) => s.text);
+/** Canonicalise a filename to a safe `*.md` name (stable: same raw → same name). */
+function canonName(raw) {
+  const base = slug(String(raw || '').replace(/\.md$/i, '')) || 'content';
+  return `${base}.md`;
+}
+
+/** Classify a Markdown block so the layout router knows its type / image-ness. */
+function classifyBlock(text) {
+  const t = String(text || '').trim();
+  const hasImage = /!\[[^\]]*\]\([^)]*\)/.test(t);
+  let type = 'text';
+  if (/^#{1,6}\s/.test(t)) type = 'heading';
+  else if (/^\s*(```|~~~)/.test(t)) type = 'code';
+  else if (/\|/.test(t) && /\n\s*\|?[\s:|-]*-{2,}/.test(t)) type = 'table';
+  else if (/^\s*([-*+]|\d+[.)])\s/m.test(t) && !hasImage) type = 'list';
+  else if (hasImage && t.replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/[\s)\]]/g, '').length < 3) type = 'image';
+  return { type, hasImage };
 }
 
 /** Sanitise a model-proposed filename to a safe, unique `*.md` name. */
@@ -165,88 +164,136 @@ export async function planFiles({ model, task, pages, host }) {
   if (all.length === 0) return [];
   const generatedAt = new Date().toISOString();
 
-  // Build the units the model will group. Prefer heading-level sections (so a
-  // single menu page can split into drinks/pizzas); if that explodes, fall back
-  // to page-level units; if still too many, consolidate without asking the model.
-  let units = [];
-  for (const p of all) {
-    for (const sec of splitSections(p.markdown)) {
-      units.push({ page: p, heading: sec.heading || p.title || p.url, text: sec.text });
-    }
-  }
-  if (units.length === 0 || units.length > UNIT_CAP) {
-    units = all.map((p) => ({ page: p, heading: p.title || p.url, text: (p.markdown || '').trim() }));
-  }
-  if (units.length === 0) return [];
-  if (units.length > UNIT_CAP) return [singleFile(task, units, generatedAt)];
+  // Units are BLOCKS (headings, paragraphs, images, lists, tables, code) in
+  // document order, kept PER PAGE — fine-grained enough that the router can put
+  // an image in a different file from its caption, or keep them together.
+  const pageUnits = all
+    .map((p) => splitBlocks(p.markdown).map((text) => ({ page: p, ...classifyBlock(text), text })))
+    .filter((arr) => arr.length);
+  const total = pageUnits.reduce((n, a) => n + a.length, 0);
+  if (total === 0) return [];
 
-  let plan = null;
+  // STEP 1: decide the file plan from the task alone (cheap, scale-independent).
+  let scheme;
   try {
-    plan = await aiPlanLayout({
-      model,
-      task,
-      host,
-      items: units.map((u, i) => ({
-        index: i,
-        source: u.page.title || u.page.url,
-        heading: u.heading,
-        preview: u.text.replace(/\s+/g, ' ').slice(0, 160),
-      })),
-    });
+    scheme = await aiLayoutScheme({ model, task, host });
   } catch {
-    plan = null;
+    scheme = { single: true };
   }
 
-  // "by pages" — one lossless file per source page, built deterministically.
-  if (plan && plan.perPage) return filesPerPage(task, units, generatedAt);
-
-  if (!plan || !Array.isArray(plan.files) || plan.files.length === 0) {
-    return [singleFile(task, units, generatedAt)];
+  if (scheme.perPage) return filesPerPage(task, pageUnits.flat(), generatedAt);
+  if (!scheme.files || !scheme.files.length || total > UNIT_CAP) {
+    return [singleFile(task, pageUnits.flat(), generatedAt)];
   }
 
-  // Sanitise each proposed file's item list, keeping the model's file order.
-  const planned = plan.files
-    .map((pf) => ({
-      filename: pf.filename,
-      items: (Array.isArray(pf.items) ? pf.items : [])
-        .map(Number)
-        .filter((n) => Number.isInteger(n) && n >= 0 && n < units.length),
-    }))
-    .filter((p) => p.items.length);
-  if (planned.length === 0) return [singleFile(task, units, generatedAt)];
+  // Canonicalise + dedupe the plan's files (stable names so per-page results
+  // merge into the same buckets).
+  const sf = [];
+  const seenNames = new Set();
+  for (const f of scheme.files) {
+    const name = canonName(f.filename);
+    if (seenNames.has(name)) continue;
+    seenNames.add(name);
+    sf.push({ name, role: f.role, rule: f.rule });
+  }
+  const matchFiles = sf.filter((f) => f.role === 'match');
+  const hasCatchAll = sf.some((f) => f.role === 'all' || f.role === 'complement');
 
-  // Assign each unit to exactly one file. Claim priority goes to the MOST
-  // SPECIFIC file (fewest listed items) first, so a dedicated "faq.md" wins the
-  // faq unit even when a catch-all file also (wrongly) lists it — a common model
-  // slip that otherwise collapses the split back into one file.
-  const assigned = new Set();
-  for (const p of [...planned].sort((a, b) => a.items.length - b.items.length)) {
-    p.claimed = p.items.filter((n) => !assigned.has(n));
-    for (const n of p.claimed) assigned.add(n);
+  const byFile = new Map(sf.map((f) => [f.name, []]));
+  const otherUnits = [];
+
+  // STEP 2: route each page's blocks INTO the plan. "all"/"complement" files are
+  // filled deterministically (so they can never be dropped); only the "match"
+  // files need the model, one small per-page call at a time → reliable at scale.
+  for (const units of pageUnits) {
+    let routed = {};
+    if (matchFiles.length) {
+      try {
+        routed = await aiRouteBlocks({
+          model,
+          task,
+          host,
+          files: matchFiles.map((f) => ({ filename: f.name, rule: f.rule })),
+          blocks: units.map((u, i) => ({
+            index: i,
+            type: u.type,
+            hasImage: u.hasImage,
+            preview: u.text.replace(/\s+/g, ' ').slice(0, 140),
+          })),
+        });
+      } catch {
+        routed = {};
+      }
+    }
+
+    // Normalise the model's per-file indexes (by canonical name).
+    const matchIdx = new Map(matchFiles.map((f) => [f.name, new Set()]));
+    for (const [rawName, idxs] of Object.entries(routed)) {
+      const cn = canonName(rawName);
+      if (!matchIdx.has(cn)) continue;
+      for (const i of idxs) if (i >= 0 && i < units.length) matchIdx.get(cn).add(i);
+    }
+    const claimed = new Set();
+    for (const s of matchIdx.values()) for (const i of s) claimed.add(i);
+
+    for (const f of sf) {
+      const bucket = byFile.get(f.name);
+      if (f.role === 'all') {
+        for (const u of units) bucket.push(u);
+      } else if (f.role === 'complement') {
+        units.forEach((u, i) => { if (!claimed.has(i)) bucket.push(u); });
+      } else {
+        [...matchIdx.get(f.name)].sort((a, b) => a - b).forEach((i) => bucket.push(units[i]));
+      }
+    }
+    // Completeness: if there is no catch-all file, blocks that matched nothing
+    // must still survive — collect them into an "other" bucket.
+    if (!hasCatchAll) units.forEach((u, i) => { if (!claimed.has(i)) otherUnits.push(u); });
   }
 
-  const used = new Set();
-  const groups = planned
-    .filter((p) => p.claimed.length)
-    .map((p) => ({ name: sanitizeName(p.filename, used), idxs: p.claimed }));
-  if (groups.length === 0) return [singleFile(task, units, generatedAt)];
-
-  // Completeness: nothing the model left unplaced may be dropped. If those
-  // leftovers outnumber the biggest named bucket, they ARE "the rest" — give
-  // them their own file so a "separate X from the rest" split still produces the
-  // rest (instead of being folded back into the special bucket and vanishing as
-  // a separate file). Otherwise they're a stray miss from a catch-all/single
-  // file, so fold them into the largest existing group.
-  const leftover = [];
-  for (let i = 0; i < units.length; i++) if (!assigned.has(i)) leftover.push(i);
-  if (leftover.length) {
-    const largest = groups.reduce((a, b) => (b.idxs.length > a.idxs.length ? b : a));
-    if (largest.idxs.length >= leftover.length) largest.idxs = largest.idxs.concat(leftover);
-    else groups.push({ name: sanitizeName('other', used), idxs: leftover });
+  const files = [];
+  for (const f of sf) {
+    const bucket = byFile.get(f.name);
+    if (bucket.length) files.push(makeFile(f.name, task, bucket, generatedAt));
   }
+  if (otherUnits.length) files.push(makeFile(canonName('other'), task, otherUnits, generatedAt));
+  if (files.length === 0) return [singleFile(task, pageUnits.flat(), generatedAt)];
+  return files;
+}
 
-  return groups.map((g) => {
-    const idxs = Array.from(new Set(g.idxs)).sort((a, b) => a - b);
-    return makeFile(g.name, task, idxs.map((i) => units[i]), generatedAt);
-  });
+/** Separate a file's leading YAML front-matter from its body. */
+function splitFrontMatter(md) {
+  const m = String(md || '').match(/^(---\n[\s\S]*?\n---\n)([\s\S]*)$/);
+  return m ? { front: m[1], body: m[2] } : { front: '', body: String(md || '') };
+}
+
+/**
+ * Apply the task's opt-in output transform (from aiInterpretTask) to already-
+ * assembled files. Runs AFTER layout so it sees each file's full content. The
+ * reshape (aiReformat) is grounded and self-targeting, so files whose content
+ * does not fit the shape come back unchanged; a `transformed:` marker is added to
+ * the front-matter of files that were actually reshaped, for transparency. A
+ * no-op when no transform is requested, so callers can invoke it unconditionally.
+ *
+ * @param {Array} files  output of planFiles
+ * @param {object} a  { model, task, transform: { shape }, host }
+ * @returns {Promise<Array>}
+ */
+export async function transformFiles(files, { model, task, transform, host } = {}) {
+  if (!transform || !transform.shape || !Array.isArray(files) || files.length === 0) return files;
+  const out = [];
+  for (const f of files) {
+    const { front, body } = splitFrontMatter(f.markdown);
+    const reshaped = await aiReformat({ model, task, shape: transform.shape, markdown: body, host }).catch(() => body);
+    if (!reshaped || reshaped.trim() === body.trim()) {
+      out.push(f); // didn't fit the shape (or failed) — keep verbatim
+      continue;
+    }
+    const marker = front
+      ? front.replace(/---\n$/, `transformed: ${JSON.stringify(transform.shape)}\n---\n`)
+      : '';
+    const markdown = marker + reshaped.trim() + '\n';
+    out.push({ ...f, markdown, bytes: Buffer.byteLength(markdown, 'utf8') });
+  }
+  return out;
 }

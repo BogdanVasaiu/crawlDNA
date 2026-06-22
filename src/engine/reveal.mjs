@@ -6,23 +6,45 @@
 import { perceive } from './perceive.mjs';
 import { clickRevealer, scrollStep } from './actions.mjs';
 import { extractMarkdown, BlockAccumulator } from '../extract.mjs';
+import { aiSelectRevealers } from './decide.mjs';
 
 /**
  * @param {import('playwright').Page} page
  * @param {object} ctx  crawl context (emit, shouldStop, options)
  * @param {string} url  the page URL (for events)
+ * @param {string} [task]  the crawl task (context for the AI reveal triage)
  * @returns {Promise<{ markdown, title, links, navLinks, routes, hitCap }>}
  */
-export async function revealAll(page, ctx, url) {
+export async function revealAll(page, ctx, url, task) {
   const acc = new BlockAccumulator();
   const navLinks = new Set();
   const actioned = new Set();
+  const decided = new Map(); // signature -> boolean: is this control worth clicking?
   const maxActions = Math.max(8, ctx.options.maxActions || 40);
 
   const capture = async (label) => {
     const html = await page.content();
     const { markdown } = extractMarkdown(html, { baseUrl: page.url() });
     return acc.add(markdown, { label });
+  };
+
+  // AI-driven discovery: let the model read the candidate controls and decide
+  // which actually hide content (catching non-obvious ones, rejecting demos),
+  // caching the verdict per signature so each control is judged once. Falls back
+  // to the per-candidate heuristic when the model is unavailable — so coverage
+  // never drops below the old deterministic behaviour. New candidates that only
+  // appear AFTER a reveal are triaged in the next loop pass (a few batched calls
+  // per page, never a per-click model loop).
+  const triage = async (candidates) => {
+    const undecided = candidates.filter((c) => !decided.has(c.signature)).slice(0, 100);
+    if (!undecided.length) return;
+    let chosen = null;
+    try {
+      chosen = await aiSelectRevealers({ model: ctx.options.model, task, candidates: undecided, host: ctx.options.ollamaHost });
+    } catch {
+      chosen = null;
+    }
+    for (const c of undecided) decided.set(c.signature, chosen ? chosen.has(c.signature) : !!c.heuristic);
   };
 
   // Dismiss cookie/consent overlays once so they don't block content.
@@ -46,7 +68,6 @@ export async function revealAll(page, ctx, url) {
   let allRoutes = new Set();
   let actions = 0;
   let hitCap = false;
-  const fingerprints = new Set([lastPerception.fingerprint]);
   let scrolledOut = false;
 
   while (!ctx.shouldStop()) {
@@ -61,7 +82,10 @@ export async function revealAll(page, ctx, url) {
     for (const l of perception.links) if (!allLinks.has(l.href)) allLinks.set(l.href, l.label);
     for (const r of perception.routes) allRoutes.add(r);
 
-    const next = perception.revealers.find((r) => !actioned.has(r.signature));
+    // AI decides which candidates reveal content; pick the first approved one not
+    // yet actioned.
+    await triage(perception.revealers);
+    const next = perception.revealers.find((r) => decided.get(r.signature) && !actioned.has(r.signature));
 
     if (!next) {
       // No un-actioned controls left: try to pull in lazy content, else stop.
@@ -117,11 +141,8 @@ export async function revealAll(page, ctx, url) {
       action: actionName,
       detail: `${next.kind}: ${next.label || '(unlabelled)'}${added ? ` (+${added})` : ''}`,
     });
-
-    // Loop guard: if the page state stops changing across actions, allow the
-    // outer while to keep draining the remaining un-actioned revealers; the
-    // `actioned` set guarantees termination.
-    fingerprints.add(perception.fingerprint);
+    // Termination is guaranteed by the `actioned` set: every approved control is
+    // clicked at most once, and the budget caps total actions.
   }
 
   // Final sweep of links/routes from the last state.

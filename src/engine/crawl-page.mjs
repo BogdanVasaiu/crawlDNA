@@ -143,7 +143,7 @@ export async function crawlPageWithEngine(target, ctx) {
         message: `Page returned HTTP ${status}; it may not exist or have moved. Trying to recover via site navigation.`,
       });
     }
-    revealed = await revealAll(page, ctx, url);
+    revealed = await revealAll(page, ctx, url, task);
   } catch (err) {
     ctx.emit({ type: 'error', url, message: 'render failed: ' + (err && err.message) });
     await context.close().catch(() => {});

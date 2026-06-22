@@ -115,6 +115,23 @@ function pickMainContent(root, contentSelector) {
   return best || root.querySelector('body') || root;
 }
 
+// Tokens that occur ONLY inside (often URL-encoded) inline-SVG markup and never
+// in real prose. When a data-URI SVG image breaks attribute parsing, its body
+// spills into the text as garbage blocks; this lets us drop those blocks even
+// when the <img> removal above can't catch the mis-parsed remnant.
+const SVG_NOISE_RE =
+  /data:image\/svg|%3c\/?svg|%3csvg|feGaussianBlur|feFlood|feBlend|fegaussianblur|linearGradient|radialGradient|gradientUnits|stdDeviation|BackgroundImageFix|foregroundBlur|interpolation-filters|userSpaceOnUse/i;
+
+/** Drop paragraph blocks that are inline-SVG / data-URI image noise. */
+export function stripSvgNoise(markdown) {
+  return String(markdown || '')
+    .split(/\n{2,}/)
+    .filter((block) => !SVG_NOISE_RE.test(block))
+    .join('\n\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 /**
  * Convert an HTML document to `{ title, markdown }`.
  * @param {string} html
@@ -145,6 +162,20 @@ export function extractMarkdown(html, { contentSelector, baseUrl, title } = {}) 
   for (const sel of CHROME_SELECTORS) {
     for (const n of content.querySelectorAll(sel)) n.remove();
   }
+
+  // Drop data-URI / inline-SVG images. Sites embed decorative gradients, blurs
+  // and icons as <img src="data:image/svg+xml,…">; they carry no extractable
+  // text and the raw SVG markup (quotes/parens/newlines) shatters into garbage
+  // Markdown. Real-URL images (http/https) are kept so they can still be
+  // extracted, separated, or excluded by task.
+  for (const img of content.querySelectorAll('img')) {
+    const src = img.getAttribute('src') || '';
+    const srcset = img.getAttribute('srcset') || '';
+    if (/^\s*data:/i.test(src) || /data:image/i.test(srcset)) img.remove();
+  }
+  // Inline <svg> nodes are removed by CHROME_SELECTORS above, but defensively
+  // drop any that slipped through (e.g. namespaced) so their markup never leaks.
+  for (const n of content.querySelectorAll('svg')) n.remove();
 
   const td = buildTurndown();
   let markdown = '';
@@ -177,6 +208,10 @@ export function extractMarkdown(html, { contentSelector, baseUrl, title } = {}) 
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+
+  // Final safety net: remove any inline-SVG/data-URI image noise that leaked as
+  // text (broken data-URI attributes spill their SVG body into the document).
+  markdown = stripSvgNoise(markdown);
 
   return { title: docTitle.trim(), markdown };
 }
@@ -225,6 +260,56 @@ export function splitBlocks(markdown) {
   }
   flush();
   return blocks;
+}
+
+/**
+ * Remove every image from Markdown — verbatim-safe (it drops a media element, it
+ * never rewrites prose). Covers inline `![alt](src)`, reference `![alt][id]`,
+ * images wrapped in a link `[![alt](src)](href)`, and any raw `<img>` that
+ * survived conversion. Honors a task like "don't include images".
+ */
+export function stripImages(markdown) {
+  return String(markdown || '')
+    // linked image: [![alt](src)](href) — drop the whole thing
+    .replace(/\[\s*!\[[^\]]*\]\([^)]*\)\s*\]\([^)]*\)/g, '')
+    // inline image: ![alt](src "title")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    // reference image: ![alt][id]
+    .replace(/!\[[^\]]*\]\[[^\]]*\]/g, '')
+    // raw <img …> tags that slipped through conversion
+    .replace(/<img\b[^>]*>/gi, '')
+    // tidy up artifacts left behind (trailing spaces, blank pile-ups)
+    .replace(/[ \t]+$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/**
+ * Remove hyperlinks but KEEP their visible text — `[text](url)` -> `text`,
+ * `<https://…>` -> dropped. Verbatim-safe for the words; only the link target is
+ * dropped. Honors a task like "strip the links". Run AFTER stripImages so an
+ * image's leftover does not get mistaken for link text.
+ */
+export function stripLinks(markdown) {
+  return String(markdown || '')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/<(https?:\/\/[^>\s]+)>/gi, '')
+    .replace(/[ \t]+$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/**
+ * Apply the task's faithful element exclusions to a Markdown string. A no-op when
+ * nothing is excluded, so callers can invoke it unconditionally.
+ * @param {string} markdown
+ * @param {{ images?: boolean, links?: boolean }} [exclude]
+ */
+export function applyExclusions(markdown, exclude = {}) {
+  let md = String(markdown || '');
+  if (exclude.images) md = stripImages(md);
+  if (exclude.links) md = stripLinks(md);
+  return md;
 }
 
 const normalizeBlock = (s) => s.replace(/\s+/g, ' ').trim().toLowerCase();
