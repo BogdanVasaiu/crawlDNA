@@ -338,6 +338,25 @@
   /* ===================== activity sidebar (live) ===================== */
   .activity { border-left:1px solid var(--b1); overflow:auto; min-height:0; padding:16px; background:var(--s1); }
   .activity h3 { font-size:9px; text-transform:uppercase; letter-spacing:.1em; color:var(--t3); margin:14px 0 8px; font-weight:600; }
+  /* live activity: Activity/Graph toggle + exploration graph */
+  .act-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .act-head h3 { margin:14px 0 8px; }
+  .act-toggle { display:inline-flex; gap:2px; background:var(--s3); border:1px solid var(--b1); border-radius:var(--r-sm); padding:2px; }
+  .act-tab { font-size:11px; padding:4px 10px; border-radius:5px; color:var(--t3); background:transparent; border:none; cursor:pointer; font-family:inherit; }
+  .act-tab:hover { color:var(--t1); }
+  .act-tab.on { background:var(--s5); color:var(--t1); }
+  .graph { overflow:auto; border:1px solid var(--b1); border-radius:var(--r-sm); background:var(--s2); padding:8px; max-height:62vh; }
+  .graph-empty { color:var(--t4); font-size:11.5px; text-align:center; padding:26px 12px; line-height:1.6; }
+  .graph svg { display:block; }
+  .g-edge { fill:none; stroke:var(--b3); stroke-width:1.5; }
+  .g-site { fill:var(--a-dim); stroke:var(--a-border); stroke-width:1.2; }
+  .g-view { fill:var(--s4); stroke:var(--b2); stroke-width:1; }
+  .g-cap  { stroke:var(--a); stroke-width:1.4; }
+  .g-cur  { stroke:var(--a2); stroke-width:1.6; }
+  .g-label { fill:var(--t1); font-size:11px; font-family:var(--font); }
+  .g-kind  { fill:var(--t4); font-size:8.5px; text-transform:uppercase; letter-spacing:.08em; }
+  .g-badge { fill:var(--a-dim); stroke:var(--a-border); }
+  .g-badge-t { fill:var(--a); font-size:10px; font-weight:700; font-family:var(--mono); }
   .now { font-size:12.5px; margin-bottom:8px; color:var(--t2); padding:9px 11px; background:var(--s2);
          border:1px solid var(--b1); border-radius:var(--r-sm); word-break:break-all; }
   .now .s { color:var(--a); font-weight:600; text-transform:uppercase; font-size:10px; letter-spacing:.05em; margin-right:6px; }
@@ -599,8 +618,18 @@
     <!-- live activity (shown only during a crawl) -->
     <div class="activity hidden" id="run-activity">
       <div class="now" id="now"><span class="muted">starting…</span></div>
-      <h3>What it did</h3>
+      <div class="act-head">
+        <h3>What it did</h3>
+        <div class="act-toggle" role="tablist">
+          <button type="button" class="act-tab on" id="tab-log">Activity</button>
+          <button type="button" class="act-tab" id="tab-graph">Graph</button>
+        </div>
+      </div>
       <div class="log" id="log"></div>
+      <div class="graph hidden" id="run-graph">
+        <div class="graph-empty" id="graph-empty">The exploration graph will appear as the crawl clicks and navigates…</div>
+        <svg id="graph-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
     </div>
     <!-- reshape: chat over the saved extraction (view mode) -->
     <div class="reshape hidden" id="run-chat">
@@ -1377,7 +1406,100 @@ function logLine(html, cls) {
   while ($('log').childNodes.length > 400) $('log').removeChild($('log').lastChild);
 }
 
+// ---------- live exploration graph (pages / clicks) ----------
+// Built from the same SSE stream: each navigation (follow / navigate / advance)
+// adds a VIEW node along a left-to-right chain; other clicks bump the current
+// view's click badge; an `extracted` marks the current view captured. Toggled with
+// the Activity/Graph buttons during a run.
+const graph = { nodes: [], cur: null, seq: 0 };
+let graphVisible = false;
+
+function graphHost(u) { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return u || ''; } }
+
+function resetGraph() { graph.nodes = []; graph.cur = null; graph.seq = 0; renderGraph(); }
+
+function gAdd(kind, label, parent) {
+  const n = {
+    id: graph.seq++, kind, label: (label || '').replace(/\s+/g, ' ').trim().slice(0, 38),
+    parent: parent ? parent.id : null, depth: parent ? parent.depth + 1 : 0, clicks: 0, captured: false,
+  };
+  graph.nodes.push(n);
+  return n;
+}
+
+function graphOnEvent(ev) {
+  if (ev.type === 'site') graph.cur = gAdd('site', graphHost(ev.url) || ev.url, null);
+  else if (ev.type === 'page') { if (!graph.cur) graph.cur = gAdd('page', graphHost(ev.url), null); }
+  else if (ev.type === 'action') {
+    if (!graph.cur) graph.cur = gAdd('site', 'run', null);
+    const d = ev.detail || '';
+    const advancing = ev.action === 'follow' || /^(navigate|advance)\b/i.test(d);
+    if (advancing) {
+      const label = d.replace(/^(navigate|advance|follow)\s*[:\-]?\s*/i, '').replace(/\s*\(\+\d+\)\s*$/, '');
+      graph.cur = gAdd('view', label || ev.action, graph.cur);
+    } else {
+      graph.cur.clicks++;
+    }
+  } else if (ev.type === 'extracted') { if (graph.cur) graph.cur.captured = true; }
+  else return;
+  if (graphVisible) renderGraph();
+}
+
+function renderGraph() {
+  const svg = $('graph-svg'); const empty = $('graph-empty');
+  if (!svg) return;
+  const nodes = graph.nodes;
+  if (empty) empty.classList.toggle('hidden', nodes.length > 0);
+  if (!nodes.length) { svg.innerHTML = ''; svg.removeAttribute('viewBox'); return; }
+  // Vertical layout: the navigation chain grows DOWNWARD (depth → y), siblings of
+  // the same depth spread across (→ x). Fits the narrow activity column and scrolls
+  // naturally as the crawl walks deeper (months/pages/steps).
+  const padX = 14, padY = 14, boxW = 150, boxH = 30, vGap = 20, hGap = 16;
+  const stepY = boxH + vGap, stepX = boxW + hGap;
+  const cols = {};
+  for (const n of nodes) { n._col = cols[n.depth] = (cols[n.depth] || 0); cols[n.depth]++; }
+  const maxDepth = Math.max(...nodes.map((n) => n.depth));
+  const maxCols = Math.max(...Object.values(cols));
+  const W = padX * 2 + (maxCols - 1) * stepX + boxW;
+  const H = padY * 2 + maxDepth * stepY + boxH;
+  for (const n of nodes) { n._x = padX + n._col * stepX; n._y = padY + n.depth * stepY; }
+  const byId = {}; for (const n of nodes) byId[n.id] = n;
+  let edges = '';
+  for (const n of nodes) {
+    if (n.parent == null) continue;
+    const p = byId[n.parent];
+    const x1 = p._x + boxW / 2, y1 = p._y + boxH, x2 = n._x + boxW / 2, y2 = n._y, my = (y1 + y2) / 2;
+    edges += `<path class="g-edge" d="M${x1} ${y1} C ${x1} ${my}, ${x2} ${my}, ${x2} ${y2}"/>`;
+  }
+  let cells = '';
+  for (const n of nodes) {
+    const cls = 'g-' + (n.kind === 'site' ? 'site' : 'view') + (n === graph.cur ? ' g-cur' : n.captured ? ' g-cap' : '');
+    cells += `<g transform="translate(${n._x},${n._y})">` +
+      `<rect class="${cls}" width="${boxW}" height="${boxH}" rx="7"/>` +
+      `<text class="g-kind" x="9" y="12">${esc(n.kind)}${n.captured ? ' ✓' : ''}</text>` +
+      `<text class="g-label" x="9" y="24">${esc(n.label || n.kind)}</text>` +
+      (n.clicks ? `<circle class="g-badge" cx="${boxW}" cy="6" r="9"/><text class="g-badge-t" x="${boxW}" y="9.5" text-anchor="middle">${n.clicks}</text>` : '') +
+      `</g>`;
+  }
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.setAttribute('width', W);
+  svg.setAttribute('height', H);
+  svg.innerHTML = edges + cells;
+}
+
+function setActView(graphOn) {
+  graphVisible = graphOn;
+  $('log').classList.toggle('hidden', graphOn);
+  $('run-graph').classList.toggle('hidden', !graphOn);
+  $('tab-log').classList.toggle('on', !graphOn);
+  $('tab-graph').classList.toggle('on', graphOn);
+  if (graphOn) renderGraph();
+}
+$('tab-log').onclick = () => setActView(false);
+$('tab-graph').onclick = () => setActView(true);
+
 function handle(ev) {
+  graphOnEvent(ev);
   switch (ev.type) {
     case 'site': {
       const s = addScan({ scanId: ev.scanId, url: ev.url, task: ev.task, title: ev.title });
@@ -1479,6 +1601,7 @@ $('start').onclick = async () => {
 
   // enter live run view
   enterRunView({ live: true });
+  resetGraph();
   $('log').innerHTML = '';
   $('run-title').textContent = 'starting…';
   $('run-sub').textContent = targets.map((t) => t.url).join('  ·  ');
