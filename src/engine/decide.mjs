@@ -216,7 +216,12 @@ export async function aiScopeContent({ llm, task, title, markdown }) {
         'Reply with {"relevant": true|false}. Relevant means the page contains content the task asks for.',
     ).catch(() => '');
     const j = parseJson(ans);
-    if (j && j.relevant === false) return { markdown: '', relevant: false };
+    // Drop the page ONLY when it is both judged irrelevant AND thin. A substantial
+    // page is never thrown away on a single relevance guess — the default is to
+    // EXTRACT EVERYTHING; narrowing to the task is the job of section-scoping below
+    // and of Phase 2 (reshape). This also avoids nuking a dynamic page whose target
+    // slice (e.g. a calendar month) hadn't been judged present at a glance.
+    if (j && j.relevant === false && markdown.length < 600) return { markdown: '', relevant: false };
     return { markdown, relevant: true };
   }
 
@@ -283,6 +288,66 @@ export async function aiSelectLinks({ llm, task, links }) {
   const idx = new Set(j.follow.map(Number).filter((n) => Number.isInteger(n)));
   const chosen = capped.filter((_, i) => idx.has(i)).map((l) => l.href);
   return chosen.length ? chosen : capped.map((l) => l.href);
+}
+
+/**
+ * Plan navigation ONCE for a multi-view page — the crawl4ai-inspired split: the AI
+ * makes a single high-level PLAN, then the reveal loop EXECUTES it deterministically
+ * (no LLM in the click loop, which is what made a per-step navigator flaky on a local
+ * model). A page can be a sequence/graph of views reached by clicking controls that
+ * move between them: paginators ("next"/"previous"/page N), calendar month arrows,
+ * wizard steps, "load next", view switchers.
+ *
+ * The model answers one easy question: for THIS task, which control ADVANCES toward
+ * the target, and what literal TEXT marks the target view (so the loop can stop by a
+ * plain substring check, not another model call)? For an open-ended task
+ * ("everything"/"all") there is no single target — it returns `direction: null` and
+ * the loop explores every control instead.
+ *
+ * @param {object} a
+ * @param {{provider,model,baseUrl,apiKey}} a.llm
+ * @param {string} a.task
+ * @param {{title?:string, snippet?:string}} a.current   the view we're on now
+ * @param {Array<{signature:string, kind?:string, label?:string, context?:string}>} a.controls
+ * @returns {Promise<{direction:number|null, target:string|null}|null>}
+ *   direction = index into `controls` of the advancing control; target = literal text
+ *   (in the PAGE's language) that appears in the target view; or null on failure.
+ */
+export async function aiPlanNavigation({ llm, task, current = {}, controls = [] }) {
+  const list = (controls || []).slice(0, 60);
+  if (list.length === 0) return { direction: null, target: null };
+
+  const lines = list
+    .map((c, i) => `${i}: [${c.kind || 'control'}] "${(c.label || '(no label)').slice(0, 70)}"` + (c.context ? ` — under "${c.context}"` : ''))
+    .join('\n');
+
+  const ans = await chat(
+    llm,
+    'You plan how to navigate a web page to fulfil an extraction task. Some pages are a ' +
+      'SEQUENCE of views reached by clicking a control repeatedly (a "next month" arrow on ' +
+      'a calendar, a "next page" paginator, wizard steps). Decide ONE plan:\n' +
+      '- If the task targets a SPECIFIC view reachable by such navigation (a particular ' +
+      'month+year, page, section or date), return the index of the control that ADVANCES ' +
+      'toward it (e.g. the next/forward/"successivo" arrow to reach a LATER month; the ' +
+      'previous/"precedente" one for an EARLIER month — reason from the current view) AND a ' +
+      'short "target" string that will literally appear in that target view. The target ' +
+      'string MUST be written in the SAME LANGUAGE/spelling as the page (look at the current ' +
+      'view text: if months read "GIUGNO", "LUGLIO" then August is "agosto", not "august").\n' +
+      '- If the task is open-ended ("everything", "all", "the whole …") or needs no such ' +
+      'navigation, return {"direction": null, "target": null}.\n' +
+      'Answer with JSON only.',
+    `Task: "${task || ''}"\n\n` +
+      `Current view (title + visible text):\n${(current.title || '').slice(0, 100)}\n${(current.snippet || '').replace(/\s+/g, ' ').slice(0, 700)}\n\n` +
+      `Controls on the page (index: [kind] "label"):\n${lines}\n\n` +
+      'Reply with {"direction": <index or null>, "target": "<text that marks the target view, or null>"}.',
+  ).catch(() => '');
+
+  const j = parseJson(ans);
+  if (!j) return null; // signal: caller falls back to open-ended exploration
+  const dir = Number(j.direction);
+  const direction = Number.isInteger(dir) && dir >= 0 && dir < list.length ? dir : null;
+  const target = typeof j.target === 'string' && j.target.trim() ? j.target.trim() : null;
+  return { direction, target };
 }
 
 /**

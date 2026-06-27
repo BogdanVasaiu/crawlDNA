@@ -1,12 +1,32 @@
-// The reveal engine: deterministically exercise EVERY control that could hide
-// content (tabs, accordions, "load more", menus, JS widgets), capturing each
-// revealed state, until nothing new appears. Model-free and universal — it does
-// not care how the site is built. Recall first; AI does precision afterwards.
+// The reveal engine: exhaustively exercise every control that could hide content
+// (tabs, accordions, "load more", menus, JS widgets, paginators) and capture each
+// revealed state until nothing NEW appears. Universal — it does not care how the
+// site is built. AI (aiSelectRevealers) decides WHICH controls hide content; this
+// loop decides HOW to traverse them, driven by a small map of explored state.
+//
+// Traversal model (map-driven, deterministic — no per-click LLM, no per-site code):
+// every click is classified by its EFFECT, by comparing the controls (siblings)
+// and the state fingerprint before vs after:
+//   - IN-PLACE   the siblings stay (a tab swaps text, an accordion opens, a calendar
+//                day shows its slots below the grid) → the control is a leaf, clicked
+//                once, and we keep going in the same view.
+//   - ADVANCING  the siblings are largely replaced by a NEW set with new content (a
+//                "next month"/"next page" paginator, a wizard step) → we DON'T retire
+//                it; we record which states it was applied from and re-apply it from
+//                each new state, walking the whole sequence (June → July → August …)
+//                until it stops yielding new states (saturation) or the budget runs
+//                out. This is the load-more idea generalised to any view-advancing
+//                control — the fix for stateful sequences a one-shot click missed.
+//   - NAVIGATED  the click left the page (real URL) or replaced the view with a
+//                dead/seen one → recorded as a link, or restoreBase() to recover the
+//                siblings.
+// A set of visited state fingerprints prevents cycles; the action budget and a
+// per-control re-use cap guarantee termination.
 
 import { perceive } from './perceive.mjs';
 import { clickRevealer, scrollStep } from './actions.mjs';
 import { extractMarkdown, BlockAccumulator } from '../extract.mjs';
-import { aiSelectRevealers } from './decide.mjs';
+import { aiSelectRevealers, aiPlanNavigation } from './decide.mjs';
 
 /**
  * @param {import('playwright').Page} page
@@ -18,9 +38,14 @@ import { aiSelectRevealers } from './decide.mjs';
 export async function revealAll(page, ctx, url, task) {
   const acc = new BlockAccumulator();
   const navLinks = new Set();
-  const actioned = new Set();
-  const decided = new Map(); // signature -> boolean: is this control worth clicking?
+  const decided = new Map(); // signature -> boolean: does this control hide content?
+  const doneLeaf = new Set(); // signatures of leaf/in-place controls already clicked
+  const advancing = new Map(); // signature -> { appliedFrom: Set<fp>, uses: number }
+  const visited = new Set(); // state fingerprints already captured (cycle guard)
   const maxActions = Math.max(8, ctx.options.maxActions || 40);
+  // Bound how many times a single view-advancing control may re-apply, so a
+  // bidirectional paginator (prev/next) can't loop forever within the budget.
+  const ADV_CAP = Math.max(12, maxActions);
 
   // Capture only the VISIBLE DOM of the current state. Interactive apps pre-render
   // many hidden panels (modals, on-screen keyboards, loading/success placeholders);
@@ -99,12 +124,10 @@ export async function revealAll(page, ctx, url, task) {
     }
   };
 
-  // Restore the BASE page so sibling controls that a view-changing click swapped
-  // away (e.g. picking a calendar day replaces the month grid with that day's
-  // slots) become reachable again. Reload + re-dismiss consent; the actioned /
-  // decided sets persist (signatures are content-based, stable across reload), so
-  // the loop then takes the NEXT un-actioned sibling. This is what lets a stateful
-  // WIZARD be explored one branch at a time — generally, with no per-site logic.
+  // Reload the original page. Used to recover from a click that navigated the view
+  // to a dead/already-seen sub-view (a true wizard branch). doneLeaf/advancing/
+  // visited persist (signatures + fingerprints are content-based, stable across
+  // reload), so the loop resumes with the next un-tried control.
   const restoreBase = async () => {
     try {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
@@ -123,11 +146,13 @@ export async function revealAll(page, ctx, url, task) {
 
   let lastPerception = await perceive(page);
   let title = lastPerception.title;
-  let allLinks = new Map(); // href -> label
-  let allRoutes = new Set();
+  const allLinks = new Map(); // href -> label
+  const allRoutes = new Set();
+  let navPlan; // computed once: { directionSig, target } to walk toward a target, or null
   let actions = 0;
   let hitCap = false;
   let scrolledOut = false;
+  let navStopped = false; // reached the target (or can't advance) — stop walking
 
   while (!ctx.shouldStop()) {
     if (actions >= maxActions) {
@@ -138,18 +163,75 @@ export async function revealAll(page, ctx, url, task) {
     const perception = await perceive(page);
     lastPerception = perception;
     title = title || perception.title;
+    const fp = perception.fingerprint;
+    visited.add(fp);
     for (const l of perception.links) if (!allLinks.has(l.href)) allLinks.set(l.href, l.label);
     for (const r of perception.routes) allRoutes.add(r);
 
-    // AI decides which candidates reveal content; pick the first approved one not
-    // yet actioned.
     await triage(perception.revealers);
-    const next = perception.revealers.find((r) => decided.get(r.signature) && !actioned.has(r.signature));
+    const approved = perception.revealers.filter((r) => decided.get(r.signature));
+
+    // Plan navigation ONCE (the crawl4ai-style split: AI plans, loop executes). The
+    // model names the control that advances toward the task's target and a literal
+    // marker for the target view; everything after is deterministic.
+    if (navPlan === undefined && approved.length) {
+      let plan = null;
+      try {
+        plan = await aiPlanNavigation({
+          llm: ctx.options.llm,
+          task,
+          current: { title: perception.title, snippet: perception.mainText },
+          controls: approved,
+        });
+      } catch {
+        plan = null;
+      }
+      navPlan =
+        plan && plan.direction != null
+          ? { directionSig: approved[plan.direction].signature, target: plan.target }
+          : null; // null = open-ended / no targeted navigation
+    }
+
+    const mainLC = (perception.mainText || '').toLowerCase();
+    const targeting = !!(navPlan && navPlan.target);
+    const onTarget = targeting && mainLC.includes(navPlan.target.toLowerCase());
+
+    let next;
+    let aiNav = false;
+
+    // (A) TARGETED WALK: step toward the target with the planned control, SKIPPING
+    // this (non-target) view's leaves so the budget isn't spent on views we don't want.
+    if (targeting && !onTarget && !navStopped) {
+      next = approved.find((r) => r.signature === navPlan.directionSig);
+      aiNav = !!next;
+      if (!next) navStopped = true; // can't advance — fall back to exploring here
+    }
+
+    // (B) EXPLORE THE CURRENT VIEW: click each un-clicked leaf (in-place reveal) and
+    // classify controls. Runs for the target view (collect its content), open-ended
+    // tasks (extract everything), or when a targeted walk can't proceed.
+    if (!next) {
+      next = approved.find((r) => !doneLeaf.has(r.signature) && !advancing.has(r.signature));
+    }
+
+    // (C) No leaves left here.
+    if (!next && !navStopped) {
+      if (targeting && onTarget) {
+        navStopped = true; // reached the target and exhausted it — don't wander past it
+      } else if (!targeting) {
+        // Open-ended: keep walking via any advancing control not yet tried from here.
+        const navCands = approved.filter((r) => {
+          const a = advancing.get(r.signature);
+          return a && a.uses < ADV_CAP && !a.appliedFrom.has(fp);
+        });
+        next = navCands[0];
+        aiNav = !!next;
+      }
+    }
 
     if (!next) {
-      // No un-actioned controls left in THIS view. If a previous click navigated us
-      // into a sub-view, the remaining siblings live back at base — restore and
-      // retry before giving up. (scrolledOut guards against looping forever.)
+      // Nothing actionable in this view. Pull in lazy content with a scroll once;
+      // if that yields nothing either, we're done.
       if (!scrolledOut) {
         const grew = await scrollStep(page);
         const added = await capture();
@@ -163,13 +245,9 @@ export async function revealAll(page, ctx, url, task) {
       break;
     }
 
-    // Sibling controls we still need to reach (approved + un-actioned, this view) —
-    // used to detect whether the upcoming click NAVIGATES the view away from them.
-    const siblingsBefore = perception.revealers
-      .filter((r) => decided.get(r.signature) && !actioned.has(r.signature) && r.signature !== next.signature)
-      .map((r) => r.signature);
-
-    actioned.add(next.signature);
+    // Approved controls other than `next` — used to detect whether the click
+    // REPLACES the current view (they vanish) or reveals IN PLACE (they stay).
+    const siblingsBefore = approved.filter((r) => r.signature !== next.signature).map((r) => r.signature);
     actions++;
 
     if (next.kind === 'loadmore') {
@@ -189,12 +267,14 @@ export async function revealAll(page, ctx, url, task) {
         ctx.emit({ type: 'action', url, action: 'click', detail: `load more — ${next.label}` });
         if (!added) break;
       }
+      doneLeaf.add(next.signature);
       continue;
     }
 
     const res = await clickRevealer(page, next.id);
     if (res.navigatedTo) {
       navLinks.add(res.navigatedTo);
+      doneLeaf.add(next.signature);
       ctx.emit({ type: 'action', url, action: 'follow', detail: next.label || res.navigatedTo });
       continue;
     }
@@ -202,29 +282,58 @@ export async function revealAll(page, ctx, url, task) {
     const label = next.kind === 'tab' ? next.label : undefined;
     const provenance = next.label ? `${next.kind}:${next.label}` : next.kind;
     const added = await capture(label, provenance);
-    const actionName = next.kind === 'tab' ? 'click' : next.kind === 'expander' ? 'expand' : 'click';
+
+    // Classify the effect by comparing siblings + state fingerprint before/after.
+    const after = await perceive(page);
+    const afterSigs = new Set(after.revealers.map((r) => r.signature));
+    const retained = siblingsBefore.filter((s) => afterSigs.has(s)).length;
+    const replaced = siblingsBefore.length >= 2 && retained <= siblingsBefore.length * 0.5;
+    const newState = !visited.has(after.fingerprint);
+    // Does the control we just clicked still exist in the new view? This is the
+    // general discriminator between the two replace-the-view cases:
+    //   - a PAGINATOR persists (a "next month" arrow is on every month) → keep
+    //     re-applying it to walk the whole sequence;
+    //   - a WIZARD OPTION disappears with its siblings (you picked one day; the day
+    //     grid was swapped for that day's slots) → restore to try the next sibling.
+    const selfPresent = afterSigs.has(next.signature);
+
+    let kind = 'reveal';
+    if (replaced && selfPresent) {
+      // VIEW-ADVANCING paginator. Re-applied from each state it reaches (tracked by
+      // appliedFrom), never globally retired — that is what walks June→July→August.
+      let a = advancing.get(next.signature);
+      if (!a) {
+        a = { appliedFrom: new Set(), uses: 0 };
+        advancing.set(next.signature, a);
+      }
+      a.appliedFrom.add(fp);
+      a.uses++;
+      kind = 'advance';
+      if (newState) {
+        visited.add(after.fingerprint);
+        scrolledOut = false; // a fresh view may have its own lazy content
+      }
+      // Landed on an already-seen state: just move on. The appliedFrom guard stops
+      // re-clicking it from this fp; uses < ADV_CAP bounds any prev/next cycle.
+    } else if (replaced && !selfPresent) {
+      // WIZARD BRANCH: the picked option and its siblings were swapped out. Restore
+      // to recover the siblings and let the loop take the next un-clicked one.
+      doneLeaf.add(next.signature);
+      await restoreBase();
+      scrolledOut = false;
+      kind = 'branch';
+    } else {
+      // IN-PLACE reveal (tab/accordion/expander/slot panel): a leaf, done once.
+      doneLeaf.add(next.signature);
+      if (newState) visited.add(after.fingerprint);
+    }
+
     ctx.emit({
       type: 'action',
       url,
-      action: actionName,
-      detail: `${next.kind}: ${next.label || '(unlabelled)'}${added ? ` (+${added})` : ''}`,
+      action: next.kind === 'tab' ? 'click' : next.kind === 'expander' ? 'expand' : 'click',
+      detail: `${aiNav ? 'navigate' : kind === 'advance' ? 'advance' : next.kind}: ${next.label || '(unlabelled)'}${added ? ` (+${added})` : ''}`,
     });
-
-    // If this click NAVIGATED the view (its siblings vanished) instead of revealing
-    // in place, restore the base so the remaining siblings stay reachable — the
-    // stateful-wizard case (pick a day → that day's slots replace the calendar). An
-    // in-place reveal keeps its siblings (other tabs/accordions still present), so
-    // this is skipped and those stay fast. Only meaningful with ≥2 siblings.
-    if (siblingsBefore.length >= 2 && !ctx.shouldStop()) {
-      const afterSigs = new Set((await perceive(page)).revealers.map((r) => r.signature));
-      const remaining = siblingsBefore.filter((s) => afterSigs.has(s)).length;
-      if (remaining <= siblingsBefore.length * 0.5) {
-        await restoreBase();
-        scrolledOut = false; // fresh base: allow lazy-scroll discovery again
-      }
-    }
-    // Termination is guaranteed by the `actioned` set: every approved control is
-    // clicked at most once, and the budget caps total actions.
   }
 
   // Final sweep of links/routes from the last state.
