@@ -6,7 +6,7 @@
 
 import { isBrowserAvailable, newPage, browserError } from '../lib/browser.mjs';
 import { loadHtml } from '../lib/fetcher.mjs';
-import { extractMarkdown } from '../extract.mjs';
+import { extractMarkdown, splitBlocks } from '../extract.mjs';
 import { revealAll } from './reveal.mjs';
 import { aiScopeContent, aiSelectLinks } from './decide.mjs';
 import { isDocsTask } from '../lib/task.mjs';
@@ -40,7 +40,7 @@ async function decideFollow(ctx, task, candidateObjs) {
   if (unknown.length) {
     let chosen;
     try {
-      chosen = await aiSelectLinks({ model: ctx.options.model, task, links: unknown, host: ctx.options.ollamaHost });
+      chosen = await aiSelectLinks({ llm: ctx.options.llm, task, links: unknown });
     } catch {
       chosen = unknown.map((c) => c.href); // completeness bias on failure
     }
@@ -164,6 +164,9 @@ export async function crawlPageWithEngine(target, ctx) {
   let markdown = revealed.markdown;
   let title = revealed.title;
   let relevant = true;
+  // Raw { text, provenance } blocks from the reveal — the spine the layout router
+  // addresses by metadata (provenance/section/ordinal). Null for the static path.
+  let blocks = Array.isArray(revealed.blocks) ? revealed.blocks : null;
 
   // Assemble candidate links: in-content + nav (button-revealed) + popups + JS routes.
   const candidates = inScopeUnique(
@@ -183,11 +186,22 @@ export async function crawlPageWithEngine(target, ctx) {
 
   const docsTask = isDocsTask(task);
 
-  // Content scoping (keep only task-relevant sections) is for custom tasks only;
-  // documentation pages are kept whole.
+  // Crawl-time scoping keeps only task-relevant SECTIONS, VERBATIM (custom tasks
+  // only; documentation pages are kept whole). This is the "stay focused" step —
+  // it drops off-task chrome (landing/footer/pricing) but NEVER transforms content.
+  // All task-driven filtering / reshaping / regrouping ("only the available slots",
+  // "prices as a table") is Phase 2 — the user asks for it AFTER the crawl, over the
+  // saved files, via aiReshape (see src/reshape.mjs). The crawl stays verbatim.
   if (markdown && !docsTask) {
-    const scoped = await aiScopeContent({ model: ctx.options.model, task, title, markdown, host: ctx.options.ollamaHost }).catch(() => null);
+    const scoped = await aiScopeContent({ llm: ctx.options.llm, task, title, markdown }).catch(() => null);
     if (scoped) {
+      // Keep blocks in sync with the scoped markdown so reveal PROVENANCE survives
+      // scoping: drop the blocks whose verbatim text the scope step removed.
+      if (blocks && scoped.markdown !== markdown) {
+        const norm = (s) => s.replace(/\s+/g, ' ').trim().toLowerCase();
+        const kept = new Set(splitBlocks(scoped.markdown).map(norm));
+        blocks = blocks.filter((b) => kept.has(norm(b.text)));
+      }
       markdown = scoped.markdown;
       relevant = scoped.relevant;
     }
@@ -208,6 +222,7 @@ export async function crawlPageWithEngine(target, ctx) {
       task,
       title,
       markdown,
+      blocks,
       meta: { strategy: 'agent', fetchedAt: now(), bytes: bytesOf(markdown) },
     },
     links: follow,

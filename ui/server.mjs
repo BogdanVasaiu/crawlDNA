@@ -13,7 +13,18 @@ import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { crawlDocs } from '../src/index.mjs';
 import { ensureBrowser } from '../src/lib/browser.mjs';
-import { listRuns, getRun, readRunFile, deleteRun, deleteAllRuns, cacheRoot } from '../src/lib/runs.mjs';
+import { reshape } from '../src/reshape.mjs';
+import { resolveLlm, listModels } from '../src/lib/llm.mjs';
+import {
+  listRuns,
+  getRun,
+  readRunFile,
+  deleteRun,
+  deleteAllRuns,
+  cacheRoot,
+  getChatSession,
+  readChatFile,
+} from '../src/lib/runs.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -169,38 +180,71 @@ async function handleRunsClear(res) {
   json(res, 200, { ok: true, deleted: n });
 }
 
-// --- Ollama health + model list ---
-// Probes the Ollama server's /api/tags. Cloud models report size 0 (or carry a
-// "-cloud" suffix), so we flag them so the UI can group them apart from local
-// models. `installed` is a best-effort check via the `ollama` CLI so we can tell
-// "not installed" from "installed but not running".
-async function checkOllama(host) {
-  const base = String(host || 'http://localhost:11434').replace(/\/+$/, '');
+// --- Phase 2: reshape (chat with a saved extraction) ---
+
+async function handleReshape(req, res) {
+  let payload;
   try {
-    const r = await fetch(base + '/api/tags', { signal: AbortSignal.timeout(10000) });
-    if (!r.ok) return { ok: false };
-    const d = await r.json();
-    const models = (d.models || []).map((m) => ({
-      name: m.name,
-      isCloud: /[:-]cloud\b/i.test(m.name || '') || m.size === 0,
-      size: m.size || 0,
-    }));
-    return { ok: true, models };
+    payload = JSON.parse(await readBody(req));
   } catch {
-    return { ok: false };
+    return json(res, 400, { error: 'invalid JSON body' });
+  }
+  const { runId, scanId = '', message, model, provider, host, baseUrl, apiKey } = payload || {};
+  if (!runId || !String(message || '').trim()) {
+    return json(res, 400, { error: 'runId and message are required' });
+  }
+  try {
+    const out = await reshape({ runId, scanId, message, model, provider, host, baseUrl, apiKey });
+    json(res, 200, out);
+  } catch (err) {
+    json(res, 400, { error: String((err && err.message) || err) });
   }
 }
 
-async function handleOllama(res, host) {
-  const result = await checkOllama(host);
-  let installed = false;
+async function handleChatGet(res, id, scan) {
   try {
-    execSync('ollama --version', { stdio: 'ignore', timeout: 5000 });
-    installed = true;
+    json(res, 200, await getChatSession(id, scan));
   } catch {
-    /* CLI missing or not on PATH */
+    json(res, 200, { messages: [], files: [] });
   }
-  json(res, 200, { installed, ...result });
+}
+
+async function handleChatFile(res, id, scan, name) {
+  try {
+    const text = await readChatFile(id, scan, name);
+    res.writeHead(200, { 'content-type': 'text/markdown; charset=utf-8' });
+    res.end(text);
+  } catch {
+    res.writeHead(404, { 'content-type': 'text/plain' });
+    res.end('file not found');
+  }
+}
+
+// --- model list (provider-aware) ---
+// Lists the models a provider offers for the setup UI's picker. For 'ollama' we
+// also report `installed` (a best-effort `ollama` CLI check) so the UI can tell
+// "not installed" from "installed but not running"; for an OpenAI-compatible API
+// we just probe its /models endpoint. Cloud models are flagged so the UI can
+// group them apart from local ones.
+async function handleModels(res, params) {
+  const provider = params.get('provider') || 'ollama';
+  const llm = resolveLlm({
+    provider,
+    ollamaHost: params.get('host') || undefined,
+    baseUrl: params.get('baseUrl') || undefined,
+    apiKey: params.get('apiKey') || undefined,
+  });
+  const result = await listModels(llm);
+  let installed = false;
+  if (llm.provider === 'ollama') {
+    try {
+      execSync('ollama --version', { stdio: 'ignore', timeout: 5000 });
+      installed = true;
+    } catch {
+      /* CLI missing or not on PATH */
+    }
+  }
+  json(res, 200, { provider: llm.provider, installed, ...result });
 }
 
 async function handleIndex(res) {
@@ -219,11 +263,17 @@ export async function startServer({ port = 4000 } = {}) {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     try {
       if (req.method === 'GET' && url.pathname === '/') return handleIndex(res);
+      if (req.method === 'GET' && url.pathname === '/api/models') {
+        return handleModels(res, url.searchParams);
+      }
+      // Back-compat: the old Ollama-only probe endpoint.
       if (req.method === 'GET' && url.pathname === '/api/ollama') {
-        return handleOllama(res, url.searchParams.get('host') || 'http://localhost:11434');
+        if (!url.searchParams.get('provider')) url.searchParams.set('provider', 'ollama');
+        return handleModels(res, url.searchParams);
       }
       if (req.method === 'GET' && url.pathname === '/events') return handleEvents(req, res);
       if (req.method === 'POST' && url.pathname === '/start') return handleStart(req, res);
+      if (req.method === 'POST' && url.pathname === '/reshape') return handleReshape(req, res);
       if (req.method === 'POST' && url.pathname === '/stop') {
         if (currentRun) currentRun.stop();
         return json(res, 200, { ok: true });
@@ -243,6 +293,13 @@ export async function startServer({ port = 4000 } = {}) {
         }
         if (parts.length === 3 && parts[2] === 'file' && req.method === 'GET') {
           return handleRunFile(res, id, url.searchParams.get('scan') || '', url.searchParams.get('name') || '');
+        }
+        // Phase 2 reshape: the scan's conversation + its derived files.
+        if (parts.length === 3 && parts[2] === 'chat' && req.method === 'GET') {
+          return handleChatGet(res, id, url.searchParams.get('scan') || '');
+        }
+        if (parts.length === 3 && parts[2] === 'chatfile' && req.method === 'GET') {
+          return handleChatFile(res, id, url.searchParams.get('scan') || '', url.searchParams.get('name') || '');
         }
       }
 

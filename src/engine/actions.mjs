@@ -20,6 +20,11 @@ export async function clickRevealer(page, id) {
     return { ok: false, note: String(err && err.message).slice(0, 120) };
   }
   await page.waitForTimeout(SETTLE_MS);
+  // Let async content triggered by the click settle before the caller captures.
+  // Many widgets load on click (e.g. a booking calendar fetches a day's slot grid
+  // via AJAX) — without this we'd snapshot a "loading…" placeholder and miss the
+  // real content. Best-effort: networkidle is generic, no per-site assumptions.
+  await page.waitForLoadState('networkidle', { timeout: 3000 }).catch(() => {});
 
   const after = page.url();
   if (after !== before) {

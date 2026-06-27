@@ -25,35 +25,51 @@ const HELP = `${C.bold}docdna${C.reset} — general, task-driven web crawler →
 Usage:
   docdna <url> [--task "..."]                       crawl one site
   docdna crawl <url> [options]                      crawl one or more sites
+  docdna reshape <runId> --ask "..."                reshape a saved extraction (Phase 2)
   docdna serve [--port 4000]                        start the Web UI
   docdna runs [list|rm <id…>|clear|path]            manage cached runs
   docdna --help
 
-Every run is saved automatically to the runs cache
+Two phases. The CRAWL extracts what your task asks for, VERBATIM — one faithful
+.md per link (+ manifest.json). Every run is saved automatically to the runs cache
 (${cacheRoot()}).
-By default the content is grouped into a single .md (+ manifest.json); when the
-task asks to split/group (e.g. "…separately", "…in groups") it becomes several
-named files (drinks.md, pizzas.md, …).
+RESHAPE is separate and optional: turn that extraction into tables, splits or
+filtered subsets with \`docdna reshape <runId> --ask "…"\` (or Reshape in the Web
+UI). It works over the saved files, as many times as you like — crawl once,
+reshape many times.
 
 Options:
   --task <text>          extraction task (repeatable, pairs with --url)
                          default: "${DEFAULT_OPTIONS.task}"
   --url <url>            a target URL (repeatable; pair with --task for per-link tasks)
   --targets <file.json>  JSON file: a targets array ([{ "url", "task" }, ...])
-  --model <name>         Ollama model for the engine (default: ${DEFAULT_OPTIONS.model})
+  --model <name>         model id for the engine (default: ${DEFAULT_OPTIONS.model})
+  --provider <name>      ollama (default) | openai (any OpenAI-compatible API)
+  --base-url <url>       API base URL for --provider openai
+                         (e.g. https://api.openai.com/v1, https://openrouter.ai/api/v1)
+  --api-key <key>        API key for --provider openai
+                         (or set DOCDNA_API_KEY / OPENAI_API_KEY in the environment)
   --browser <mode>       never | auto | always   (default: ${DEFAULT_OPTIONS.browser})
   --concurrency <n>      parallel page fetches (default: ${DEFAULT_OPTIONS.concurrency})
   --max-pages <n>        safety cap, 0 = unlimited (default: ${DEFAULT_OPTIONS.maxPages})
   --max-actions <n>      per-page engine action cap (default: ${DEFAULT_OPTIONS.maxActions})
   --include <regex>      only crawl URLs matching
   --exclude <regex>      skip URLs matching
+  --ollama-host <url>    Ollama server URL (default: http://127.0.0.1:11434)
   --cache-dir <dir>      override the runs-cache location
   --port <n>             port for \`serve\` (default: 4000)
 
+Reshape (Phase 2 — over a saved run):
+  --ask <text>           the reshape request, e.g. "make a table of the prices"
+  --scan <id>            which link of the run to reshape (default: the only/first)
+
 Examples:
   docdna https://docusaurus.io/docs --task "Extract all documentation"
-  docdna https://pizzeria.example/menu --task "Extract the drinks and pizzas separately"
+  docdna https://pizzeria.example/menu --task "Extract the full menu"
   docdna --url https://a.dev --task "Get pricing" --url https://b.dev --task "Get API docs"
+  OPENAI_API_KEY=sk-… docdna https://docs.dev --provider openai \\
+    --base-url https://api.openai.com/v1 --model gpt-4o-mini
+  docdna reshape 20260615-084021-3f9c1a --ask "make a table of the prices"
   docdna runs                # list cached runs
   docdna runs rm 20260615-084021-3f9c1a
   docdna serve --port 4000
@@ -64,14 +80,20 @@ const OPTION_CONFIG = {
   url: { type: 'string', multiple: true },
   targets: { type: 'string' },
   model: { type: 'string' },
+  provider: { type: 'string' },
+  'base-url': { type: 'string' },
+  'api-key': { type: 'string' },
   browser: { type: 'string' },
   concurrency: { type: 'string' },
   'max-pages': { type: 'string' },
   'max-actions': { type: 'string' },
   include: { type: 'string' },
   exclude: { type: 'string' },
+  'ollama-host': { type: 'string' },
   'cache-dir': { type: 'string' },
   port: { type: 'string' },
+  ask: { type: 'string' },
+  scan: { type: 'string' },
   help: { type: 'boolean', short: 'h' },
 };
 
@@ -102,12 +124,16 @@ async function buildTargets(values, positionals) {
 function optionsFromFlags(values) {
   const o = {};
   if (values.model) o.model = values.model;
+  if (values.provider) o.provider = values.provider;
+  if (values['base-url']) o.baseUrl = values['base-url'];
+  if (values['api-key']) o.apiKey = values['api-key'];
   if (values.browser) o.browser = values.browser;
   if (values.concurrency) o.concurrency = Number(values.concurrency);
   if (values['max-pages'] != null) o.maxPages = Number(values['max-pages']);
   if (values['max-actions'] != null) o.maxActions = Number(values['max-actions']);
   if (values.include) o.include = values.include;
   if (values.exclude) o.exclude = values.exclude;
+  if (values['ollama-host']) o.ollamaHost = values['ollama-host'];
   if (values['cache-dir']) o.cacheDir = values['cache-dir'];
   if (values.task && values.task.length === 1) o.task = values.task[0];
   return o;
@@ -206,6 +232,46 @@ async function runCrawl(values, positionals) {
   }
 }
 
+// Phase 2 — reshape a saved extraction into new files, on demand.
+async function reshapeCommand(args, values) {
+  const runId = args[0];
+  const message = values.ask || (values.task && values.task[0]);
+  if (!runId || !message) {
+    process.stderr.write(c(C.red, 'Usage: docdna reshape <runId> --ask "<request>" [--scan <id>]\n'));
+    process.exitCode = 1;
+    return;
+  }
+  const { reshape } = await import('../src/reshape.mjs');
+  try {
+    const out = await reshape({
+      runId,
+      scanId: values.scan || '',
+      message,
+      model: values.model || DEFAULT_OPTIONS.model,
+      provider: values.provider,
+      host: values['ollama-host'],
+      baseUrl: values['base-url'],
+      apiKey: values['api-key'],
+      cacheDir: values['cache-dir'],
+    });
+    if (out.reply) process.stdout.write('\n' + out.reply + '\n');
+    if (out.files.length) {
+      process.stdout.write(`\n${c(C.bold, 'Files')}  ${c(C.dim, '(saved under the run’s chat/ folder)')}\n`);
+      for (const f of out.files) {
+        process.stdout.write(`  ${c(C.green, '✓')} ${f.filename} ${c(C.dim, `(${f.bytes}b)`)}\n`);
+      }
+    } else {
+      process.stdout.write(c(C.dim, '\n(no files produced — the model answered without emitting any)\n'));
+    }
+    if (out.truncated) {
+      process.stdout.write(c(C.yellow, '\n⚠ only the first part of a large extraction was used\n'));
+    }
+  } catch (err) {
+    process.stderr.write(c(C.red, 'reshape failed: ' + (err && err.message ? err.message : err) + '\n'));
+    process.exitCode = 1;
+  }
+}
+
 function fmtDate(iso) {
   try {
     return new Date(iso).toLocaleString();
@@ -301,6 +367,11 @@ async function main() {
 
   if (positionals[0] === 'runs') {
     await runsCommand(positionals.slice(1), values);
+    return;
+  }
+
+  if (positionals[0] === 'reshape') {
+    await reshapeCommand(positionals.slice(1), values);
     return;
   }
 

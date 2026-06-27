@@ -22,10 +22,48 @@ export async function revealAll(page, ctx, url, task) {
   const decided = new Map(); // signature -> boolean: is this control worth clicking?
   const maxActions = Math.max(8, ctx.options.maxActions || 40);
 
-  const capture = async (label) => {
-    const html = await page.content();
+  // Capture only the VISIBLE DOM of the current state. Interactive apps pre-render
+  // many hidden panels (modals, on-screen keyboards, loading/success placeholders);
+  // `page.content()` serializes them all and extractMarkdown can't see CSS
+  // visibility in Node, so it would dump them into the output. We mark non-visible
+  // elements in-browser (atomically: mark → serialize → unmark) and drop them in
+  // extract. This is exactly the reveal model: content surfaced by a click IS
+  // visible at capture time; mutually-exclusive tab variants are each visible when
+  // active (so all still accumulate); chrome never revealed stays out. Generic —
+  // no per-site logic. If reveal misses a control, raise --max-actions (the right
+  // knob), rather than leaking every hidden panel.
+  const captureHtml = async () => {
+    try {
+      return await page.evaluate(() => {
+        const isHidden = (el) => {
+          const s = getComputedStyle(el);
+          if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') return true;
+          const r = el.getBoundingClientRect();
+          return r.width <= 1 && r.height <= 1;
+        };
+        const marked = [];
+        for (const el of document.body.querySelectorAll('*')) {
+          if (isHidden(el)) {
+            el.setAttribute('data-docdna-hidden', '1');
+            marked.push(el);
+          }
+        }
+        const out = document.documentElement.outerHTML;
+        for (const el of marked) el.removeAttribute('data-docdna-hidden');
+        return out;
+      });
+    } catch {
+      return page.content();
+    }
+  };
+
+  // `label` is the tab-variant marker (toMarkdown); `provenance` is the richer
+  // reveal source carried to the layout router so tasks like "the dropdown
+  // results → dropdown.md" can route by HOW a block was surfaced.
+  const capture = async (label, provenance = 'baseline') => {
+    const html = await captureHtml();
     const { markdown } = extractMarkdown(html, { baseUrl: page.url() });
-    return acc.add(markdown, { label });
+    return acc.add(markdown, { label, provenance });
   };
 
   // AI-driven discovery: let the model read the candidate controls and decide
@@ -40,7 +78,7 @@ export async function revealAll(page, ctx, url, task) {
     if (!undecided.length) return;
     let chosen = null;
     try {
-      chosen = await aiSelectRevealers({ model: ctx.options.model, task, candidates: undecided, host: ctx.options.ollamaHost });
+      chosen = await aiSelectRevealers({ llm: ctx.options.llm, task, candidates: undecided });
     } catch {
       chosen = null;
     }
@@ -49,15 +87,36 @@ export async function revealAll(page, ctx, url, task) {
 
   // Dismiss cookie/consent overlays once so they don't block content.
   const consentSeen = new Set();
-  const first = await perceive(page);
-  for (const c of first.consent || []) {
-    if (ctx.shouldStop()) break;
-    const sig = c.label.toLowerCase();
-    if (consentSeen.has(sig)) continue;
-    consentSeen.add(sig);
-    const res = await clickRevealer(page, c.id);
-    if (!res.navigatedTo) await capture();
-  }
+  const dismissConsent = async () => {
+    const p = await perceive(page);
+    for (const c of p.consent || []) {
+      if (ctx.shouldStop()) break;
+      const sig = c.label.toLowerCase();
+      if (consentSeen.has(sig)) continue;
+      consentSeen.add(sig);
+      const r = await clickRevealer(page, c.id);
+      if (!r.navigatedTo) await capture();
+    }
+  };
+
+  // Restore the BASE page so sibling controls that a view-changing click swapped
+  // away (e.g. picking a calendar day replaces the month grid with that day's
+  // slots) become reachable again. Reload + re-dismiss consent; the actioned /
+  // decided sets persist (signatures are content-based, stable across reload), so
+  // the loop then takes the NEXT un-actioned sibling. This is what lets a stateful
+  // WIZARD be explored one branch at a time — generally, with no per-site logic.
+  const restoreBase = async () => {
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+      await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+      await page.waitForTimeout(300);
+    } catch {
+      return;
+    }
+    await dismissConsent();
+  };
+
+  await dismissConsent();
 
   // Baseline (default state).
   await capture();
@@ -88,7 +147,9 @@ export async function revealAll(page, ctx, url, task) {
     const next = perception.revealers.find((r) => decided.get(r.signature) && !actioned.has(r.signature));
 
     if (!next) {
-      // No un-actioned controls left: try to pull in lazy content, else stop.
+      // No un-actioned controls left in THIS view. If a previous click navigated us
+      // into a sub-view, the remaining siblings live back at base — restore and
+      // retry before giving up. (scrolledOut guards against looping forever.)
       if (!scrolledOut) {
         const grew = await scrollStep(page);
         const added = await capture();
@@ -101,6 +162,12 @@ export async function revealAll(page, ctx, url, task) {
       }
       break;
     }
+
+    // Sibling controls we still need to reach (approved + un-actioned, this view) —
+    // used to detect whether the upcoming click NAVIGATES the view away from them.
+    const siblingsBefore = perception.revealers
+      .filter((r) => decided.get(r.signature) && !actioned.has(r.signature) && r.signature !== next.signature)
+      .map((r) => r.signature);
 
     actioned.add(next.signature);
     actions++;
@@ -118,7 +185,7 @@ export async function revealAll(page, ctx, url, task) {
           navLinks.add(res.navigatedTo);
           break;
         }
-        const added = await capture();
+        const added = await capture(undefined, 'loadmore');
         ctx.emit({ type: 'action', url, action: 'click', detail: `load more — ${next.label}` });
         if (!added) break;
       }
@@ -133,7 +200,8 @@ export async function revealAll(page, ctx, url, task) {
     }
 
     const label = next.kind === 'tab' ? next.label : undefined;
-    const added = await capture(label);
+    const provenance = next.label ? `${next.kind}:${next.label}` : next.kind;
+    const added = await capture(label, provenance);
     const actionName = next.kind === 'tab' ? 'click' : next.kind === 'expander' ? 'expand' : 'click';
     ctx.emit({
       type: 'action',
@@ -141,6 +209,20 @@ export async function revealAll(page, ctx, url, task) {
       action: actionName,
       detail: `${next.kind}: ${next.label || '(unlabelled)'}${added ? ` (+${added})` : ''}`,
     });
+
+    // If this click NAVIGATED the view (its siblings vanished) instead of revealing
+    // in place, restore the base so the remaining siblings stay reachable — the
+    // stateful-wizard case (pick a day → that day's slots replace the calendar). An
+    // in-place reveal keeps its siblings (other tabs/accordions still present), so
+    // this is skipped and those stay fast. Only meaningful with ≥2 siblings.
+    if (siblingsBefore.length >= 2 && !ctx.shouldStop()) {
+      const afterSigs = new Set((await perceive(page)).revealers.map((r) => r.signature));
+      const remaining = siblingsBefore.filter((s) => afterSigs.has(s)).length;
+      if (remaining <= siblingsBefore.length * 0.5) {
+        await restoreBase();
+        scrolledOut = false; // fresh base: allow lazy-scroll discovery again
+      }
+    }
     // Termination is guaranteed by the `actioned` set: every approved control is
     // clicked at most once, and the budget caps total actions.
   }
@@ -152,6 +234,7 @@ export async function revealAll(page, ctx, url, task) {
   const links = [...allLinks.entries()].map(([href, label]) => ({ href, label }));
   return {
     markdown: acc.toMarkdown(),
+    blocks: acc.toBlocks(), // raw { text, provenance } in capture order, for layout
     title,
     links,
     navLinks: [...navLinks],

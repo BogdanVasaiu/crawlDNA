@@ -64,8 +64,19 @@ export async function perceive(page, { maxText = 2500, maxRevealers = 150, maxLi
         }
       }
 
+      // "Site chrome" (global nav/header/footer) is detected from SEMANTIC LANDMARKS
+      // only — the <nav>/<header>/<footer>/<aside> tags and ARIA landmark roles —
+      // because those are universal, spec-defined signals. We deliberately do NOT
+      // classify chrome from class-name SUBSTRINGS: a generic word like "header",
+      // "toolbar", "menu" or "tab" routinely appears inside a CONTENT widget's
+      // markup (e.g. a calendar's prev/next arrows live in `.monthly-header`, an
+      // editor has a `.toolbar`), and a substring filter there silently hides real,
+      // clickable content controls from the AI before it can judge them. Only a few
+      // unambiguous, never-in-content chrome words are matched on class as a final
+      // backstop. Everything else is surfaced and the AI decides (it already rejects
+      // plain navigation). This keeps perception universal — no structure guessing.
       const CHROME_TAGS = new Set(['NAV', 'HEADER', 'FOOTER', 'ASIDE']);
-      const CHROME_RE = /(^|\s|[-_])(nav|navbar|menu|header|footer|sidebar|toc|breadcrumb|masthead|appbar|app-bar|toolbar|banner|cookie|consent|tabbar)(\s|[-_]|$)/i;
+      const CHROME_RE = /(^|\s|[-_])(navbar|sidebar|breadcrumb|masthead|cookie|consent)(\s|[-_]|$)/i;
       const isChrome = (el) => {
         let n = el;
         while (n && n !== document.body) {
@@ -153,6 +164,7 @@ export async function perceive(page, { maxText = 2500, maxRevealers = 150, maxLi
 
         let kind = 'control';
         if (LOADMORE.test(label)) kind = 'loadmore';
+        else if (tag === 'select' || role === 'combobox' || role === 'listbox' || /(^|\s|[-_])(dropdown|combobox|listbox|select)(\s|[-_]|$)/i.test(cls)) kind = 'dropdown';
         else if (role === 'tab' || ariaSelected != null || ariaPressed != null || /(^|\s|-)tab(\s|-|$)/i.test(cls)) kind = 'tab';
         else if (ariaExpanded != null || ariaControls || tag === 'summary' || tag === 'details' || /accordion|collaps|expand|disclosure/i.test(cls)) kind = 'expander';
 

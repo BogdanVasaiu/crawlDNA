@@ -21,18 +21,21 @@ rest in extract.md"). For each site it:
    more", variant switches), then clicks them and captures each revealed state.
 3. **Discovers pages beyond the DOM** — mines JS/JSON route blobs, sitemaps and
    `llms-full.txt`, and lets the AI decide which links are real, on-task pages.
-4. **Stays on-task with AI** — keeps only the sections the task asks for, applies
-   faithful element exclusions ("no images"), routes content into the requested
-   `.md` files, and (on explicit request) reshapes it ("as a table").
+4. **Stays on-task with AI** — the crawl keeps only the sections the task asks
+   for, **verbatim**, as one faithful `.md` per link. Turning that into tables,
+   splits or filtered subsets is a separate, optional **Phase 2 — reshape** (§7.4):
+   a chat over the saved files you can reuse any number of times.
 
 ### Guiding principles
 
 - **Precision over speed, always.** Slow is fine; never miss content.
 - **Universal, not per-site.** One general AI-driven algorithm for *any* site —
   no per-framework/per-site special cases. Lean on AI for generality.
-- **Verbatim by default.** The AI chooses *what to keep* and *which file it lands
-  in*; it does **not** rewrite content — except for one opt-in transform the user
-  explicitly requests (see §7.6).
+- **Two phases, cleanly separated.** The **crawl** (Phase 1) only ever decides
+  *what to keep* and never rewrites content — its output is verbatim by
+  construction. *How to present it* — tables, splits, filtered subsets — is
+  **Phase 2 (reshape)**, run on demand over the saved files. The crawl can't
+  reshape; reshape can't change what was crawled.
 - **AI reads the user's task, regex reads nothing about the website.** The few
   deterministic backstops interpret the user's *English instruction* (a reliable
   fallback when the local model hedges); they never hard-code website structure.
@@ -46,8 +49,9 @@ rest in extract.md"). For each site it:
 | **Target** | `{ url, task }`. The unit of work the caller submits. |
 | **Scan** | One submitted link's crawl: its own pages, its own dedup, its own output files. A run can hold several scans. |
 | **Run** | The container for one invocation: one folder on disk with a subfolder per scan, plus `manifest.json` and `run.json`. |
-| **Task** | The natural-language instruction. Interpreted once per scan into structured **directives** (§7.1). |
+| **Task** | The natural-language instruction for the crawl — purely *what to extract* (the scope). |
 | **Page** | A crawled+extracted page: `{ url, task, title, markdown, meta }`. |
+| **Reshape** | Phase 2: an on-demand chat over a saved scan's files that emits new, derived `.md` files (a table, a split, a filtered subset). |
 | **Event** | A streamed progress object (`site`, `page`, `action`, `extracted`, `progress`, `warn`, `saved`, `done`, …). |
 
 ---
@@ -57,8 +61,7 @@ rest in extract.md"). For each site it:
 ```mermaid
 flowchart TD
   A[crawlDocs targets, options] --> B{for each scan}
-  B --> C[aiInterpretTask: task → directives]
-  C --> D{isDocsTask?}
+  B --> D{isDocsTask?}
   D -- yes --> E[docs profile: llms-full.txt → sitemap → engine]
   D -- no  --> F[general crawl from entry]
   E --> G[per-page engine]
@@ -71,12 +74,13 @@ flowchart TD
     G4 --> G5[aiSelectLinks: which links are real on-task pages]
   end
 
-  G --> H[ctx.addPage: dedup + enforce exclusions]
+  G --> H[ctx.addPage: content-dedup]
   H --> I{frontier drained?}
   I -- no --> G
-  I -- yes --> J[layout: planFiles general block router + transformFiles]
+  I -- yes --> J[assembleScan: one consolidated verbatim .md per scan]
   J --> K[saveRun: write .md + manifest.json + run.json]
   K --> L[done event + result]
+  L -. on demand .-> M[Phase 2 — reshape: aiReshape over the saved files]
 ```
 
 Everything outside this core (the CLI, the Web UI, the sibling `refdna` project)
@@ -225,52 +229,31 @@ Converts an HTML state to clean Markdown:
 
 ## 7. The AI judgment layer ([`src/engine/decide.mjs`](src/engine/decide.mjs))
 
-All prompts to the local Ollama model live here. Each function is verbatim-safe
-and **completeness-biased** (when unsure, keep / follow / reveal). Every call
-degrades gracefully on failure.
+All prompts to the local Ollama model live here. The **Phase 1** functions
+(scope / links / reveal) are verbatim-safe and **completeness-biased** (when
+unsure, keep / follow / reveal); the **Phase 2** function (`aiReshape`) is the one
+that reworks content, on demand and value-faithfully. Every call degrades
+gracefully on failure.
 
-### 7.1 `aiInterpretTask` — task → directives
-
-Called once per scan. Turns the plain-English task into:
-
-```js
-{
-  exclude:   { images: bool, links: bool },     // drop these element types
-  transform: null | { shape: string },          // opt-in output reshape
-}
-```
-
-It deliberately does **not** decide file layout — that's open-ended ("the task
-may be infinite"), so it's judged against the content by the general block router
-(§7.5), not pre-enumerated into directive types here. The model is the primary
-interpreter; **narrow deterministic backstops** make the common phrasings robust
-even if the model hedges. Key rules:
-
-- **Exclusion** ("no images", "without links") → `exclude.*`. Detected by the AI
-  *and* a regex requiring a negation verb near the noun (so "extract the images"
-  never matches).
-- **Keep-bias:** excluding loses content, so an explicit exclusion verb always
-  wins, but a bare AI "exclude" is ignored when the task is clearly doing file
-  layout (a `.md` name, "separate", "own file", "with their…") — there the content
-  is being *filed*, not removed.
-- **Mention-gate:** never exclude a noun the task never named (kills model
-  hallucinations like flagging links on an images-only task).
-
-### 7.2 `aiScopeContent` — keep only task-relevant sections
+### 7.1 `aiScopeContent` — keep only task-relevant sections *(Phase 1)*
 
 For **non-documentation** tasks, splits the page into heading sections and asks
 the model which to keep (dropping nav/footer/cookie/marketing/unrelated). Output
 is the **original text** of the kept sections — never rewritten. Empty/uncertain
-→ keep everything. (Documentation pages are kept whole.)
+→ keep everything. (Documentation pages are kept whole.) This is the **"stay
+focused"** step — for "the documentation" it drops the landing page, footer and
+pricing so the crawl never wastes time on off-task content. It never transforms;
+anything that *filters by value/row, reshapes, or regroups* ("only the available
+slots", "prices as a table") is **Phase 2** (`aiReshape`, §7.4).
 
-### 7.3 `aiSelectLinks` — which links are real, on-task pages
+### 7.2 `aiSelectLinks` — which links are real, on-task pages *(Phase 1)*
 
 Given every raw destination verbatim, the model recognises real pages (normal
 URLs, SPA fragment routes `#/contact`, query routes `?view=pricing`, pagination)
 versus same-page anchors and off-task links — **without the algorithm hard-coding
 any URL-shape rule**. Cached per href; follows everything on failure.
 
-### 7.4 `aiSelectRevealers` — which controls hide content *(the AI-driven core of #6.3)*
+### 7.3 `aiSelectRevealers` — which controls hide content *(Phase 1 — the discovery core)*
 
 Reads the candidate controls (kind/label/class/heading-context) and returns those
 that, when clicked, reveal hidden readable content — rejecting copy/share/theme
@@ -278,64 +261,43 @@ toggles, demo widgets (date pickers, sliders), and plain navigation. Returns
 chosen signatures, or `null` to signal the reveal loop to use its heuristic
 fallback.
 
-### 7.5 The general layout router (how content becomes files) — two steps
+### 7.4 `aiReshape` — reshape the extraction on demand *(Phase 2)*
 
-Layout is **one general, AI-judged mechanism that replaces all per-case handling**
-(separate files, images-with/without-their-text, by category, "X from the rest",
-duplicating a subset into a second file). Content is treated as fine-grained
-**blocks** (heading, paragraph, image, list, table, code), kept **per page**. It
-runs in two steps so it stays reliable no matter how big the crawl is:
+The **only** place verbatim is relaxed — and it runs **after** the crawl, never
+during it, over the **saved** files (so the crawl stays a pure, faithful
+extraction). Given a scan's assembled corpus plus the conversation so far, it
+answers a request like a knowledge-base query: it may **filter** ("only the special
+pizzas", "only the available slots"), **reshape** ("as a table"), **regroup** ("by
+day") and **split** into several files. **Value-faithful** — every kept
+name/number/price/time/string is copied exactly; it never invents or alters a
+value. It emits deliverables as **file blocks** —
 
-1. **`aiLayoutScheme(task)`** — decides the file *plan* from the **task alone**
-   (no content, so the prompt is tiny and stable). Returns `{ single }`,
-   `{ perPage }`, or `{ files: [{ filename, role, rule }] }` where `role` is:
-   - **`match`** — holds specific content described by `rule` (e.g. "images with
-     their titles/descriptions").
-   - **`all`** — holds *everything* (e.g. "the rest in ext.md but include the
-     images anyway").
-   - **`complement`** — holds "the rest" = everything the match files didn't take.
-2. **`aiRouteBlocks`** — routes **one page at a time** into the `match` files
-   (small, reliable prompts). `all`/`complement` files are filled
-   **deterministically** by the caller, so they can never be dropped or collapse —
-   results merge across pages by canonical filename.
+```
+===FILE: prices.md===
+…markdown…
+===END===
+```
 
-This split is what fixed a real scale failure: a single global routing call
-collapsed a 12-page crawl into one file. Block granularity is what lets an image
-be separated from — or kept with — its caption; text always stays verbatim, and
-completeness is guaranteed (unmatched blocks land in the catch-all or an
-`other.md`).
-
-### 7.6 `aiReformat` — opt-in, grounded output transform
-
-The one place verbatim is relaxed, and only when the task explicitly asks for a
-shape ("as a table"). It reshapes the *already-extracted* content, **grounded**
-(use only the given content, keep every value exact, never invent/drop) and
-**self-targeting** (content that doesn't fit the shape is returned unchanged).
+— and any prose outside the blocks is the chat reply (a pure question comes back
+reply-only). Orchestrated by [`src/reshape.mjs`](src/reshape.mjs): it loads the
+scan's verbatim files (front-matter stripped, capped for context), calls
+`aiReshape`, saves each produced file under `<scan>/chat/`, and appends the turn to
+that scan's session — so the same extraction is reused across many reshapes without
+re-crawling. The crawl's own files are never modified.
 
 ---
 
 ## 8. Output layout ([`src/lib/layout.mjs`](src/lib/layout.mjs))
 
-After a scan's frontier drains, its kept pages become `.md` files:
+After a scan's frontier drains, **`assembleScan`** turns its kept pages into **one
+consolidated, verbatim `.md`** — every page's Markdown concatenated in crawl order
+under a small YAML front-matter header (task, timestamp, source URLs). When a scan
+spans multiple pages, each page's content is introduced by a heading (its title)
+and a `_Source:_` line so provenance is clear — a structural header only; the page
+content itself is untouched. Nothing is split, filtered or reshaped here: that is
+**Phase 2** (§7.4), which writes its derived files separately under `<scan>/chat/`.
 
-```
-if no pages → []
-else        → planFiles (general block router, §7.5)
-              then transformFiles if directives.transform
-```
-
-- **`planFiles`** — the single, general layout path. Splits every page into
-  **blocks** (`splitBlocks`), tags each (type + `hasImage`), gets the file plan
-  from `aiLayoutScheme`, routes each page's blocks with `aiRouteBlocks`, fills
-  `all`/`complement` files deterministically, and assembles each file verbatim in
-  document order (merged across pages by canonical filename). There is **no**
-  separate image-split / category special-case — they're all just routings derived
-  from the task (§7.5).
-- **`transformFiles`** — applies the opt-in `aiReformat` shape to each file's body
-  (front-matter preserved; reshaped files get a `transformed:` marker).
-
-Each output file is `{ filename, title, markdown, bytes, pages: string[] }` with
-YAML front-matter recording the task, timestamp and source URLs.
+Each output file is `{ filename, title, markdown, bytes, pages: string[] }`.
 
 ---
 
@@ -347,15 +309,19 @@ Every run is cached automatically under `<project>/.docdna/runs/` (override with
 ```
 20260621-160156-aa9498/         # run id: <timestamp>-<rand>
 ├── 01-example-com/             # one subfolder per scan
-│   ├── images.md               # the output .md files
-│   ├── content.md
-│   └── manifest.json           # this scan's files + metadata
+│   ├── documentation.md        # the crawl's consolidated, verbatim .md
+│   ├── manifest.json           # this scan's files + metadata
+│   └── chat/                   # Phase 2 (reshape) outputs — created on first use
+│       ├── session.json        # the reshape conversation + produced-file registry
+│       └── prices.md           # a derived file
 ├── manifest.json               # run-level manifest
 └── run.json                    # run summary (id, createdAt, pages, scans[…])
 ```
 
 `runs.mjs` also provides `listRuns`, `getRun`, `readRunFile`, `deleteRun`,
-`deleteAllRuns` — used by the CLI `runs` subcommand and the Web UI.
+`deleteAllRuns`, plus the reshape helpers `getChatSession` / `saveChatSession` /
+`writeChatFile` / `readChatFile` — used by the CLI `runs`/`reshape` subcommands and
+the Web UI.
 
 ---
 
@@ -396,19 +362,19 @@ is reliable for the reveal/link/layout JSON; very small models are not.
 
 ## 12. The task model (summary)
 
-A task can do four independent things, all AI-judged:
+Two phases, cleanly separated:
 
-1. **Scope** — *what to keep* (`aiScopeContent`): "extract all data", "only the
-   pricing", value filters like "prices over 100".
-2. **Exclude** — *faithful element removal* (`exclude.images/links`): "don't
-   include images".
-3. **Layout** — *how to file what's kept*, decided by the **general two-step
-   router** (`aiLayoutScheme` + `aiRouteBlocks`, §7.5): one file (default) · per
-   page · by category · images with or without their captions · "X from the rest" ·
-   duplicate a subset into a second file — all as block routings judged from the
-   task, not fixed cases.
-4. **Transform** — *opt-in output shape* (`aiReformat`): "as a table" — the only
-   non-verbatim operation, grounded and self-targeting.
+**Phase 1 — Crawl** (the `task` = *what to extract*):
+1. **Reveal** — never miss hidden/dynamic content (`aiSelectRevealers`, §7.3).
+2. **Scope** — keep only what the task asks for, **verbatim**, at the heading-
+   section grain (`aiScopeContent`, §7.1): "all the documentation", "only the
+   pricing". Drops off-task chrome so the crawl never wastes time.
+   → output: one faithful, consolidated `.md` per link.
+
+**Phase 2 — Reshape** (on demand, over the saved files — `aiReshape`, §7.4):
+**filter** ("only the available slots"), **reshape** ("as a table"), **regroup**
+("by day"), **split** into several files — value-faithful, reusable, as many times
+as you like. The only non-verbatim step, and it never touches the crawl's files.
 
 ---
 
@@ -416,8 +382,8 @@ A task can do four independent things, all AI-judged:
 
 Consumers iterate the run for live progress. Event types:
 
-`site` · `strategy` · `discover` · `page` · `action` (click/expand/follow/exclude/
-transform/layout) · `extracted` · `progress` · `warn` · `error` · `saved` · `done`.
+`site` · `strategy` · `discover` · `page` · `action` (click/expand/follow) ·
+`extracted` · `progress` · `warn` · `error` · `saved` · `done`.
 
 Each event is stamped with the active `scanId`/`scanIndex` so a UI can route it to
 the right link.

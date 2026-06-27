@@ -249,6 +249,56 @@ export async function readRunFile(id, scanId, name, opts = {}) {
   return readFile(sid ? path.join(dir, sid, base) : path.join(dir, base), 'utf8');
 }
 
+// --- Phase 2 "reshape" chat: derived files + session, per scan -------------
+// Reshape outputs live UNDER the scan in a `chat/` subfolder, so the crawl's own
+// files stay immutable ("crawl once, reshape many times"). `session.json` records
+// the conversation and a registry of the files produced from it.
+
+function scanChatDir(id, scanId, opts = {}) {
+  const dir = runDir(id, opts);
+  const sid = String(scanId || '');
+  if (sid && !ID_RE.test(sid)) throw new Error(`invalid scan id: ${sid}`);
+  return sid ? path.join(dir, sid, 'chat') : path.join(dir, 'chat');
+}
+
+/** Read a scan's reshape session ({ messages, files }); empty if none yet. */
+export async function getChatSession(id, scanId, opts = {}) {
+  try {
+    const raw = await readFile(path.join(scanChatDir(id, scanId, opts), 'session.json'), 'utf8');
+    const s = JSON.parse(raw);
+    return {
+      messages: Array.isArray(s.messages) ? s.messages : [],
+      files: Array.isArray(s.files) ? s.files : [],
+    };
+  } catch {
+    return { messages: [], files: [] };
+  }
+}
+
+/** Persist a scan's reshape session. */
+export async function saveChatSession(id, scanId, session, opts = {}) {
+  const dir = scanChatDir(id, scanId, opts);
+  await mkdir(dir, { recursive: true });
+  const body = { messages: session.messages || [], files: session.files || [] };
+  await writeFile(path.join(dir, 'session.json'), JSON.stringify(body, null, 2) + '\n', 'utf8');
+  return body;
+}
+
+/** Write one derived (reshape) file into a scan's chat folder. Returns its name. */
+export async function writeChatFile(id, scanId, name, content, opts = {}) {
+  const dir = scanChatDir(id, scanId, opts);
+  await mkdir(dir, { recursive: true });
+  const base = path.basename(String(name));
+  await writeFile(path.join(dir, base), content, 'utf8');
+  return base;
+}
+
+/** Read one derived (reshape) file from a scan's chat folder. */
+export async function readChatFile(id, scanId, name, opts = {}) {
+  const base = path.basename(String(name));
+  return readFile(path.join(scanChatDir(id, scanId, opts), base), 'utf8');
+}
+
 /** Delete one run. */
 export async function deleteRun(id, opts = {}) {
   await rm(runDir(id, opts), { recursive: true, force: true });

@@ -12,6 +12,11 @@ pressing "load more", scrolling for lazy content — i.e. content a plain fetch
 never sees. After revealing everything, it extracts what's relevant to the task
 and follows the other useful links it finds, like a crawler.
 
+What it extracts stays **verbatim** — exactly what your task asked for, one clean
+`.md` per link. Turning that into tables, splits or filtered subsets is a separate,
+optional step — **reshape** — a chat over the saved files you can reuse any number
+of times. **Crawl once, reshape many times.**
+
 It runs three ways from a single headless core:
 
 1. **CLI** — point it at link(s) + task(s), get Markdown.
@@ -19,8 +24,8 @@ It runs three ways from a single headless core:
 3. **Importable library** — another Node project imports it and consumes results.
 
 > 📐 **How it works:** see [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full
-> pipeline — the AI-driven reveal engine, the task/directive model, and output
-> layout.
+> pipeline — the AI-driven reveal engine, the two-phase (crawl → reshape) model,
+> and output layout.
 
 ## Install
 
@@ -61,11 +66,12 @@ actually needs the browser.
 ## CLI
 
 ```sh
-docdna <url> [--task "..."]                       # crawl one site
+docdna <url> [--task "..."]                       # crawl one site (Phase 1)
 docdna crawl <url> [--task "..."] [--model qwen3-coder:30b]
                     [--browser auto|never|always] [--concurrency 4]
                     [--include "..."] [--exclude "..."] [--max-pages 0]
                     [--cache-dir <dir>]
+docdna reshape <runId> --ask "..."                # reshape a saved extraction (Phase 2)
 docdna runs [list|rm <id…>|clear|path]            # manage cached runs
 docdna serve [--port 4000]                        # start the Web UI
 docdna --help
@@ -232,19 +238,11 @@ skipped with a warning — never circumvented.
 Every run is saved automatically — one folder per run under the runs cache
 (`<project>/.docdna/runs/<runId>/`):
 
-- **AI-grouped Markdown.** By default the whole extraction lands in a **single
-  `.md`**. The model splits it into **several named files only when the task asks
-  to**:
-  - *by category* — *"extract the drinks and pizzas separately"* →
-    `drinks.md` + `pizzas.md` (*"extract the menu prices"* → just `menu.md`);
-  - *by page* — *"extract the information by pages"* (or "per page", "each page
-    separately") → **one file per crawled page**, named from the page
-    (`home.md`, `about.md`, `contact.md`, …), shown as one tab each.
-
-  Content is kept **verbatim** (the model only chooses the grouping and
-  filenames). For category splits, any section the model doesn't explicitly
-  place is folded into the first file; per-page splits are assembled
-  deterministically, so no extracted content is ever dropped.
+- **One verbatim `.md` per link.** The crawl consolidates everything it kept for a
+  link into a single faithful Markdown file (named from the task), in crawl order.
+  When a link spans several pages, each page is introduced by a heading + a
+  `_Source:_` line so provenance is clear; the content itself is never rewritten.
+  The crawl **does not** split, filter or reshape — that is Phase 2.
 - **`manifest.json`** — `runId`, `createdAt`, `targets`, `options`, the `files`
   list (`{ filename, title, bytes, pages }`), every page `{ url, task, title,
   strategy, file }`, plus `stats` and `warnings`. **refdna reads this manifest.**
@@ -253,6 +251,24 @@ Every run is saved automatically — one folder per run under the runs cache
 Each Markdown file starts with a short YAML front-matter block (`task`,
 `generatedAt`, `sources`). Manage saved runs with `docdna runs …` or the Web UI's
 "Previous runs" list.
+
+## Reshape (Phase 2)
+
+The crawl gives you a faithful extraction; **reshape** turns it into whatever you
+need, on demand, over the **saved** files — as many times as you like, reusing the
+same extraction as context (like a knowledge base). It can **filter** ("only the
+available slots"), **reshape** ("as a table"), **regroup** ("by day") and **split**
+into several files. It is **value-faithful**: every kept name, number, price and
+time is copied exactly — it never invents or alters a value.
+
+```sh
+docdna reshape <runId> --ask "make a table of the prices"
+docdna reshape <runId> --ask "split the menu into one file per category" --scan 01-example-com
+```
+
+In the Web UI, open a saved link and use the **Reshape** panel — each answer is
+saved as a new file (under `<runId>/<scan>/chat/`) you can open and reuse. The
+crawl's own files are never modified.
 
 ## License
 

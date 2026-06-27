@@ -148,6 +148,13 @@ export function extractMarkdown(html, { contentSelector, baseUrl, title } = {}) 
     blockTextElements: { script: false, style: false, noscript: false },
   });
 
+  // The reveal marks non-visible elements (hidden modals, off-state placeholders,
+  // on-screen keyboards) with data-docdna-hidden so the serialized HTML doesn't
+  // leak them into the output. Drop them before anything else inspects the DOM, so
+  // even the main-content picker never lands on a hidden panel. No-op for the
+  // static path (no markers present).
+  for (const n of root.querySelectorAll('[data-docdna-hidden]')) n.remove();
+
   const docTitle =
     title ||
     textOf(root.querySelector('h1')) ||
@@ -263,6 +270,60 @@ export function splitBlocks(markdown) {
 }
 
 /**
+ * Classify a Markdown block by structural TYPE and image-ness. Pure/deterministic
+ * so the layout router (and the block-metadata spine) agree on what a block is.
+ * `text` here is the paragraph type (kept for back-compat with existing routing).
+ */
+export function classifyBlock(text) {
+  const t = String(text || '').trim();
+  const hasImage = /!\[[^\]]*\]\([^)]*\)/.test(t);
+  let type = 'text';
+  if (/^#{1,6}\s/.test(t)) type = 'heading';
+  else if (/^\s*(```|~~~)/.test(t)) type = 'code';
+  else if (/\|/.test(t) && /\n\s*\|?[\s:|-]*-{2,}/.test(t)) type = 'table';
+  else if (/^\s*([-*+]|\d+[.)])\s/m.test(t) && !hasImage) type = 'list';
+  else if (hasImage && t.replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/[\s)\]]/g, '').length < 3) type = 'image';
+  return { type, hasImage };
+}
+
+/** Heading depth of a block (# = 1 … ###### = 6), or 0 if it is not a heading. */
+function headingLevel(text) {
+  const m = String(text || '').match(/^(#{1,6})\s/);
+  return m ? m[1].length : 0;
+}
+
+/**
+ * Enrich raw blocks (`{ text, provenance? }` or bare strings) with the structural
+ * metadata every AI layer addresses blocks by:
+ *   - `type` / `hasImage` — what the block is.
+ *   - `sectionPath` — the heading ancestry the block falls UNDER (its parent
+ *     headings, not itself), so a rule like "everything under Privacy Policy" or
+ *     "only the white pizzas" is a metadata match, not a per-case rule.
+ *   - `ord` — document-order index within the page (for ordinal tasks / stable sort).
+ *   - `provenance` — which interaction surfaced the block (`baseline`, `tab:…`,
+ *     `expander:…`, `dropdown:…`, `loadmore`), so "the dropdown results" is routable.
+ * This is the spine that lets layout stay one general AI-judged mechanism.
+ */
+export function enrichBlocks(rawBlocks) {
+  const stack = []; // active heading ancestry: { level, title }
+  return (rawBlocks || []).map((b, ord) => {
+    const text = typeof b === 'string' ? b : b.text;
+    const provenance = (b && typeof b === 'object' && b.provenance) || 'baseline';
+    const { type, hasImage } = classifyBlock(text);
+    const lvl = headingLevel(text);
+    let sectionPath;
+    if (lvl) {
+      while (stack.length && stack[stack.length - 1].level >= lvl) stack.pop();
+      sectionPath = stack.map((s) => s.title);
+      stack.push({ level: lvl, title: text.replace(/^#{1,6}\s*/, '').trim().slice(0, 80) });
+    } else {
+      sectionPath = stack.map((s) => s.title);
+    }
+    return { text, type, hasImage, provenance, sectionPath, ord };
+  });
+}
+
+/**
  * Remove every image from Markdown — verbatim-safe (it drops a media element, it
  * never rewrites prose). Covers inline `![alt](src)`, reference `![alt][id]`,
  * images wrapped in a link `[![alt](src)](href)`, and any raw `<img>` that
@@ -323,7 +384,7 @@ const normalizeBlock = (s) => s.replace(/\s+/g, ' ').trim().toLowerCase();
 export class BlockAccumulator {
   constructor() {
     this.seen = new Set();
-    this.blocks = []; // { text, label }
+    this.blocks = []; // { text, label, provenance }
   }
 
   /**
@@ -332,14 +393,18 @@ export class BlockAccumulator {
    * mutually exclusive and never coexist in one capture, so we cannot infer
    * their document position — capture order (= the reveal's DOM click order)
    * keeps them in natural reading order. Returns the count of new blocks.
+   *
+   * `label` is the TAB-variant marker used by toMarkdown (unchanged behaviour).
+   * `provenance` is the richer reveal source carried to the layout router
+   * (`baseline` / `tab:…` / `expander:…` / `dropdown:…` / `loadmore`).
    */
-  add(markdown, { label } = {}) {
+  add(markdown, { label, provenance } = {}) {
     let added = 0;
     for (const text of splitBlocks(markdown)) {
       const key = createHash('sha1').update(normalizeBlock(text)).digest('hex');
       if (this.seen.has(key)) continue;
       this.seen.add(key);
-      this.blocks.push({ text, label: label || null });
+      this.blocks.push({ text, label: label || null, provenance: provenance || 'baseline' });
       added++;
     }
     return added;
@@ -347,6 +412,11 @@ export class BlockAccumulator {
 
   size() {
     return this.blocks.length;
+  }
+
+  /** Raw blocks (`{ text, provenance }`) in capture order for the layout router. */
+  toBlocks() {
+    return this.blocks.map((b) => ({ text: b.text, provenance: b.provenance || 'baseline' }));
   }
 
   toMarkdown() {

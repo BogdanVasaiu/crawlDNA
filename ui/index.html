@@ -122,6 +122,15 @@
   .ollama-install code { font-size:11px; padding:1.5px 6px; }
   .ollama-install a { color:var(--a); }
 
+  /* ---- provider segmented control ---- */
+  .seg { display:inline-flex; gap:3px; padding:4px; background:var(--s3); border:1px solid var(--b2);
+         border-radius:var(--r); margin-bottom:13px; }
+  .seg-btn { padding:7px 16px; border:none; border-radius:var(--r-sm); background:transparent; color:var(--t3);
+             font-size:12px; font-weight:500; cursor:pointer; transition:color .15s, background .15s; }
+  .seg-btn:hover { color:var(--t1); background:rgba(255,255,255,.05); transform:none; }
+  .seg-btn.active { color:var(--a); background:var(--s5); font-weight:600;
+                    box-shadow:0 1px 4px rgba(0,0,0,.6), 0 0 0 1px var(--b3); }
+
   /* ---- custom select dropdown (model picker) ---- */
   .dropdown { position:relative; }
   .dd-trigger { width:100%; display:flex; align-items:center; gap:8px; justify-content:space-between;
@@ -212,6 +221,7 @@
   /* body: main column (active link) + activity (live only) */
   .run-body { flex:1; display:grid; grid-template-columns:1fr; min-height:0; }
   .run-body.live { grid-template-columns:1fr 360px; }
+  .run-body.chat { grid-template-columns:1fr clamp(330px, 33%, 460px); }
   .run-main { display:flex; flex-direction:column; min-height:0; overflow:hidden; }
   .run-subhead { padding:16px 24px 0; flex-shrink:0; }
   .run-subhead .rsh-title { font-weight:600; font-size:15px; color:var(--t1); letter-spacing:-.01em;
@@ -322,14 +332,42 @@
   .tag.follow{ color:var(--blue);} .tag.extract{ color:var(--a);} .tag.done{ color:var(--t4);}
   .warn { color:var(--amb); } .err { color:var(--err); }
 
+  /* ===================== reshape panel (view mode) ===================== */
+  .reshape { border-left:1px solid var(--b1); display:flex; flex-direction:column; min-height:0; background:var(--s1); }
+  .rs-head { padding:15px 16px 12px; border-bottom:1px solid var(--b1); flex-shrink:0; }
+  .rs-title { font-size:13px; font-weight:700; color:var(--t1); display:flex; align-items:center; gap:8px; }
+  .rs-title::before { content:''; width:14px; height:2px; border-radius:2px; background:linear-gradient(90deg,var(--a),transparent); }
+  .rs-sub { color:var(--t3); font-size:11px; margin-top:6px; line-height:1.5; }
+  .rs-log { flex:1; overflow:auto; padding:14px 16px; display:flex; flex-direction:column; gap:10px; min-height:0; }
+  .rs-empty { color:var(--t4); font-size:11.5px; text-align:center; padding:22px 12px; line-height:1.65;
+              border:1px dashed var(--b2); border-radius:var(--r); background:rgba(255,255,255,.01); }
+  .rs-msg { max-width:92%; padding:9px 12px; border-radius:var(--r); font-size:12.5px; line-height:1.55; word-wrap:break-word; overflow-wrap:anywhere; }
+  .rs-msg.user { align-self:flex-end; background:var(--a-dim); border:1px solid var(--a-border); color:var(--t1); border-bottom-right-radius:3px; }
+  .rs-msg.bot { align-self:flex-start; background:var(--s3); border:1px solid var(--b1); color:var(--t2); border-bottom-left-radius:3px; }
+  .rs-msg.bot.err { background:rgba(248,113,113,.08); border-color:rgba(248,113,113,.25); color:var(--err); }
+  .rs-msg.pending { color:var(--t4); font-style:italic; }
+  .rs-files { display:flex; flex-wrap:wrap; gap:6px; margin-top:9px; }
+  .rs-file { display:inline-flex; align-items:center; gap:6px; padding:5px 10px; border-radius:var(--r-sm); cursor:pointer;
+             font-family:var(--mono); font-size:10.5px; color:var(--a); background:var(--a-dim); border:1px solid var(--a-border);
+             transition:background .15s; }
+  .rs-file:hover { background:rgba(34,227,163,.18); }
+  .rs-file::before { content:'▤'; font-size:10px; opacity:.85; }
+  .rs-input { display:flex; gap:8px; padding:12px 14px; border-top:1px solid var(--b1); flex-shrink:0; align-items:flex-end; }
+  .rs-input textarea { flex:1; resize:none; background:var(--s3); border:1px solid var(--b2); color:var(--t1);
+                       padding:9px 11px; border-radius:var(--r-sm); font-family:var(--font); font-size:12.5px; line-height:1.5;
+                       outline:none; max-height:120px; transition:border-color .15s, box-shadow .15s; }
+  .rs-input textarea:focus { border-color:var(--a); box-shadow:0 0 0 3px var(--a-dim); }
+  .rs-input button { flex:0 0 auto; padding:9px 16px; }
+  .rs-input button:disabled { opacity:.5; cursor:not-allowed; transform:none; }
+
   .hidden { display:none !important; }
 
   /* ===================== responsive ===================== */
   @media (max-width:720px) {
     .brand-tag { display:none; }
     .grid2 { grid-template-columns:1fr; }
-    .run-body.live { grid-template-columns:1fr; }
-    .activity { border-left:none; border-top:1px solid var(--b1); }
+    .run-body.live, .run-body.chat { grid-template-columns:1fr; }
+    .activity, .reshape { border-left:none; border-top:1px solid var(--b1); }
     .runtop-right { width:auto; }
     .viewer { padding:18px 16px 40px; }
   }
@@ -350,8 +388,10 @@
 <section class="setup" id="view-setup">
   <div class="card">
     <h2>New crawl</h2>
-    <p class="hint">Give it one or more links and a plain-English task. docdna opens each page in a real
-      browser, reveals hidden content (tabs, accordions, “load more”), and keeps only what matches your task.</p>
+    <p class="hint">Give it one or more links and a plain-English task describing <b>what to extract</b>.
+      docdna opens each page in a real browser, reveals hidden content (tabs, accordions, “load more”),
+      and keeps only what your task asks for — <b>verbatim</b>. Turning it into tables, splits or filtered
+      subsets comes later, in <b>Reshape</b>.</p>
     <div class="chk">
       <input type="checkbox" id="sharedToggle" />
       <label for="sharedToggle">Apply one shared task to all links</label>
@@ -366,14 +406,58 @@
     <button id="addRow">+ add link</button>
 
     <div class="opts">
-      <div class="ollama">
-        <div class="ollama-bar">
-          <span class="ollama-status checking" id="ollama-status">
-            <i class="od"></i><span class="ot" id="ollama-status-text">checking Ollama…</span>
-          </span>
-          <button class="ghost mini" type="button" id="recheckOllama">↻ Re-check</button>
+      <label>AI provider</label>
+      <div class="seg" id="provider-seg">
+        <button type="button" class="seg-btn active" data-provider="ollama">Ollama · local</button>
+        <button type="button" class="seg-btn" data-provider="openai">API · URL + key</button>
+      </div>
+
+      <!-- Ollama provider: local server status + install hint -->
+      <div id="ollama-block">
+        <div class="ollama">
+          <div class="ollama-bar">
+            <span class="ollama-status checking" id="ollama-status">
+              <i class="od"></i><span class="ot" id="ollama-status-text">checking Ollama…</span>
+            </span>
+            <button class="ghost mini" type="button" id="recheckOllama">↻ Re-check</button>
+          </div>
+          <div class="ollama-install hidden" id="ollama-install"></div>
         </div>
-        <div class="ollama-install hidden" id="ollama-install"></div>
+      </div>
+
+      <!-- OpenAI-compatible provider: base URL + API key -->
+      <div id="api-block" class="hidden">
+        <div class="grid2">
+          <div>
+            <label>Base URL</label>
+            <input id="apiBaseUrl" list="apiPresets" placeholder="https://api.openai.com/v1" />
+            <datalist id="apiPresets">
+              <option value="https://api.openai.com/v1">OpenAI</option>
+              <option value="https://openrouter.ai/api/v1">OpenRouter (many models, one key)</option>
+              <option value="https://api.groq.com/openai/v1">Groq</option>
+              <option value="https://api.together.xyz/v1">Together</option>
+              <option value="https://api.mistral.ai/v1">Mistral</option>
+              <option value="https://api.deepseek.com/v1">DeepSeek</option>
+              <option value="http://localhost:11434/v1">Ollama (OpenAI-compatible)</option>
+              <option value="http://localhost:1234/v1">LM Studio</option>
+              <option value="http://localhost:8000/v1">vLLM / llama.cpp</option>
+            </datalist>
+          </div>
+          <div>
+            <label>API key</label>
+            <input id="apiKey" type="password" placeholder="sk-…  (or set OPENAI_API_KEY)" autocomplete="off" />
+          </div>
+        </div>
+        <div class="ollama-bar" style="margin-top:10px">
+          <span class="ollama-status checking" id="api-status">
+            <i class="od"></i><span class="ot" id="api-status-text">enter a base URL</span>
+          </span>
+          <button class="ghost mini" type="button" id="fetchModels">↻ Fetch models</button>
+        </div>
+        <p class="hint" style="margin:9px 0 0">
+          Any OpenAI-compatible API works — OpenAI, OpenRouter, Groq, Together, or a local server
+          (llama.cpp, LM Studio, vLLM). Pick the model below, or type its id if the list is empty.
+        </p>
       </div>
 
       <div class="grid2">
@@ -386,8 +470,12 @@
             </button>
             <div class="dd-panel" id="model-panel"></div>
           </div>
+          <div id="apiModelWrap" class="hidden">
+            <input id="apiModel" list="apiModelList" placeholder="e.g. gpt-4o-mini · anthropic/claude-3.5-sonnet" autocomplete="off" />
+            <datalist id="apiModelList"></datalist>
+          </div>
         </div>
-        <div><label>Ollama host</label><input id="ollamaHost" value="http://localhost:11434" /></div>
+        <div id="ollamaHostCell"><label>Ollama host</label><input id="ollamaHost" value="http://localhost:11434" /></div>
         <div><label>Browser</label>
           <select id="browser">
             <option value="auto">auto</option>
@@ -400,10 +488,11 @@
         <div><label>Include (regex)</label><input id="include" placeholder="optional" /></div>
         <div><label>Exclude (regex)</label><input id="exclude" placeholder="optional" /></div>
       </div>
-      <p class="muted" style="margin:12px 0 0">
-        Every run is saved automatically. Output is one <code>.md</code> by default;
-        ask the task to split to get several named files — by category
-        (“…drinks and pizzas separately”) or by page (“…by pages”, one file/tab per page).
+      <p class="muted" style="margin:14px 0 0">
+        Every run is saved automatically. The crawl gives you one faithful, <b>verbatim</b>
+        <code>.md</code> per link — exactly the content your task asked for, nothing reshaped.
+        To turn it into tables, splits or filtered subsets, open the saved link and use
+        <b>Reshape</b> — a chat over the extraction you can reuse any number of times.
       </p>
     </div>
 
@@ -468,6 +557,19 @@
       <h3>What it did</h3>
       <div class="log" id="log"></div>
     </div>
+    <!-- reshape: chat over the saved extraction (view mode) -->
+    <div class="reshape hidden" id="run-chat">
+      <div class="rs-head">
+        <div class="rs-title">Reshape</div>
+        <div class="rs-sub">Ask for tables, splits or filtered subsets of this link’s extraction.
+          Each answer is saved as a new file — crawl once, reshape many times.</div>
+      </div>
+      <div class="rs-log" id="rs-log"></div>
+      <form class="rs-input" id="rs-form">
+        <textarea id="rs-msg" rows="2" placeholder="e.g. make a table of the prices · split the menu by category · only the available days"></textarea>
+        <button class="primary" id="rs-send" type="submit">Send</button>
+      </form>
+    </div>
   </div>
 </section>
 
@@ -479,9 +581,11 @@ let liveRunId = null;       // current run id in the view (live once saved, or a
 let runScans = [];          // ordered scans (links) shown in the current run view
 let activeScanId = null;    // which link tab is open
 let runMode = 'view';       // 'live' | 'view'
-let ollamaModels = [];      // [{ name, isCloud, size }] from the health check
-let ollamaOk = false;       // is the Ollama server responding
-let selectedModel = '';     // chosen model name (persisted in localStorage)
+let crawlFinished = false;  // a live crawl has reached 'done' (reshape becomes available)
+let provider = 'ollama';    // 'ollama' | 'openai' (any OpenAI-compatible API)
+let availableModels = [];   // [{ name, isCloud, size }] from the model probe
+let connOk = false;         // is the selected provider responding
+let selectedModel = '';     // chosen model name/id (persisted per provider)
 
 function esc(s) { return (s || '').replace(/[&<>]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m])); }
 function escAttr(s) { return esc(s).replace(/"/g, '&quot;'); }
@@ -596,7 +700,7 @@ function addRow(url = '', task = '') {
   div.className = 'row';
   div.innerHTML =
     '<input class="url" placeholder="https://example.com/menu" />' +
-    '<input class="task" placeholder="task for this link (e.g. extract the drinks and pizzas separately)" />' +
+    '<input class="task" placeholder="what to extract (e.g. the full menu · all documentation · the prices)" />' +
     '<button title="remove">✕</button>';
   div.querySelector('.url').value = url;
   div.querySelector('.task').value = task;
@@ -625,20 +729,26 @@ function collectTargets() {
 }
 
 function collectOptions() {
-  const host = $('ollamaHost').value.trim();
   const o = {
     model: selectedModel || undefined,
-    ollamaHost: host || undefined,
+    provider,
     browser: $('browser').value,
     concurrency: Number($('concurrency').value) || 4,
     maxPages: Number($('maxPages').value) || 0,
   };
+  if (provider === 'openai') {
+    o.baseUrl = $('apiBaseUrl').value.trim() || undefined;
+    const k = $('apiKey').value.trim();
+    if (k) o.apiKey = k;
+  } else {
+    o.ollamaHost = $('ollamaHost').value.trim() || undefined;
+  }
   if ($('include').value.trim()) o.include = $('include').value.trim();
   if ($('exclude').value.trim()) o.exclude = $('exclude').value.trim();
   return o;
 }
 
-// ---------- ollama: health check + model dropdown ----------
+// ---------- provider + model probe (Ollama or any OpenAI-compatible API) ----
 const OLLAMA_DEFAULT = 'http://localhost:11434';
 
 function fmtSize(b) {
@@ -677,16 +787,16 @@ function selectModel(name, isCloud) {
 
 function populateModels() {
   const panel = $('model-panel');
-  if (!ollamaModels.length) {
+  if (!availableModels.length) {
     panel.innerHTML = '<div class="dd-empty">No models found' +
-      (ollamaOk ? '<br>Pull one, e.g. <code>ollama pull qwen3-coder:30b</code>' : '') + '</div>';
+      (connOk ? '<br>Pull one, e.g. <code>ollama pull qwen3-coder:30b</code>' : '') + '</div>';
     selectedModel = '';
     setModelLabel(null);
     return;
   }
   const byName = (a, b) => a.name.localeCompare(b.name);
-  const locals = ollamaModels.filter((m) => !m.isCloud).sort(byName);
-  const clouds = ollamaModels.filter((m) => m.isCloud).sort(byName);
+  const locals = availableModels.filter((m) => !m.isCloud).sort(byName);
+  const clouds = availableModels.filter((m) => m.isCloud).sort(byName);
   const group = (title, arr) => arr.length
     ? '<div class="dd-group">' + title + '</div>' + arr.map((m) =>
         '<button type="button" class="dd-item" data-name="' + escAttr(m.name) + '" data-cloud="' + (m.isCloud ? '1' : '0') + '">' +
@@ -700,9 +810,58 @@ function populateModels() {
     (el.onclick = () => selectModel(el.dataset.name, el.dataset.cloud === '1')));
 
   // Keep the saved/current pick if it's still available, else fall back sensibly.
-  let pick = ollamaModels.find((m) => m.name === selectedModel);
-  if (!pick) pick = ollamaModels.find((m) => m.name === 'qwen3-coder:30b') || locals[0] || ollamaModels[0];
+  let pick = availableModels.find((m) => m.name === selectedModel);
+  if (!pick) pick = availableModels.find((m) => m.name === 'qwen3-coder:30b') || locals[0] || availableModels[0];
   if (pick) selectModel(pick.name, pick.isCloud);
+}
+
+// API mode: a free-typed model id (model ids are well-known), with the fetched
+// list offered as native autocomplete via a <datalist>. This covers providers
+// whose /models endpoint needs no auth (OpenRouter) AND those where it is gated.
+function onApiModelInput() {
+  selectedModel = $('apiModel').value.trim();
+  try { localStorage.setItem('docdna.model.openai', selectedModel); } catch {}
+}
+
+function populateApiModels() {
+  $('apiModelList').innerHTML = availableModels
+    .map((m) => '<option value="' + escAttr(m.name) + '"></option>').join('');
+  const inp = $('apiModel');
+  if (!inp.value) {
+    let saved = ''; try { saved = localStorage.getItem('docdna.model.openai') || ''; } catch {}
+    inp.value = saved || (availableModels[0] ? availableModels[0].name : '');
+  }
+  selectedModel = inp.value.trim();
+}
+
+function refreshPicker() {
+  if (provider === 'openai') populateApiModels();
+  else populateModels();
+}
+
+function setApiStatus(state, html) {
+  $('api-status').className = 'ollama-status ' + state;
+  $('api-status-text').innerHTML = html;
+}
+
+// Switch provider: toggle the relevant blocks + the model widget, restore that
+// provider's saved model, then re-probe.
+function setProvider(p) {
+  provider = p === 'openai' ? 'openai' : 'ollama';
+  try { localStorage.setItem('docdna.provider', provider); } catch {}
+  $('provider-seg').querySelectorAll('.seg-btn').forEach((b) =>
+    b.classList.toggle('active', b.dataset.provider === provider));
+  $('ollama-block').classList.toggle('hidden', provider !== 'ollama');
+  $('api-block').classList.toggle('hidden', provider !== 'openai');
+  $('model-dd').classList.toggle('hidden', provider !== 'ollama');
+  $('apiModelWrap').classList.toggle('hidden', provider !== 'openai');
+  $('ollamaHostCell').classList.toggle('hidden', provider !== 'ollama');
+  try {
+    selectedModel = provider === 'openai'
+      ? (localStorage.getItem('docdna.model.openai') || $('apiModel').value.trim())
+      : (localStorage.getItem('docdna.model') || selectedModel);
+  } catch {}
+  refreshModels();
 }
 
 function showOllamaInstall(state) {
@@ -721,26 +880,54 @@ function showOllamaInstall(state) {
     '<a href="https://ollama.com/download" target="_blank" rel="noopener">ollama.com/download</a>, then Re-check.';
 }
 
-async function refreshOllama() {
-  const host = $('ollamaHost').value.trim() || OLLAMA_DEFAULT;
-  try { localStorage.setItem('docdna.host', host); } catch {}
-  setOllamaStatus('checking', 'checking Ollama…');
+// Probe the active provider for its model list + connection status.
+async function refreshModels() {
+  const qs = new URLSearchParams({ provider });
+  if (provider === 'openai') {
+    const baseUrl = $('apiBaseUrl').value.trim();
+    const apiKey = $('apiKey').value.trim();
+    try { localStorage.setItem('docdna.baseUrl', baseUrl); localStorage.setItem('docdna.apiKey', apiKey); } catch {}
+    if (!baseUrl) {
+      connOk = false; availableModels = [];
+      setApiStatus('checking', 'enter a base URL & key, then Fetch models');
+      refreshPicker();
+      return;
+    }
+    setApiStatus('checking', 'checking…');
+    qs.set('baseUrl', baseUrl);
+    if (apiKey) qs.set('apiKey', apiKey);
+  } else {
+    const host = $('ollamaHost').value.trim() || OLLAMA_DEFAULT;
+    try { localStorage.setItem('docdna.host', host); } catch {}
+    setOllamaStatus('checking', 'checking Ollama…');
+    qs.set('host', host);
+  }
+
   let d;
   try {
-    d = await (await fetch('/api/ollama?host=' + encodeURIComponent(host))).json();
+    d = await (await fetch('/api/models?' + qs.toString())).json();
   } catch {
-    ollamaOk = false; ollamaModels = [];
-    setOllamaStatus('err', 'Cannot reach Ollama');
-    showOllamaInstall('notInstalled');
-    populateModels();
+    connOk = false; availableModels = [];
+    if (provider === 'openai') setApiStatus('err', 'Cannot reach the server');
+    else { setOllamaStatus('err', 'Cannot reach Ollama'); showOllamaInstall('notInstalled'); }
+    refreshPicker();
     return;
   }
-  ollamaOk = !!d.ok;
-  ollamaModels = (d.models || []).map((m) => typeof m === 'string'
-    ? { name: m, isCloud: false, size: 0 }
+
+  connOk = !!d.ok;
+  availableModels = (d.models || []).map((m) => typeof m === 'string'
+    ? { name: m, isCloud: provider === 'openai', size: 0 }
     : { name: m.name, isCloud: !!m.isCloud, size: m.size || 0 });
-  if (d.ok) {
-    const n = ollamaModels.length;
+
+  if (provider === 'openai') {
+    if (d.ok) {
+      const n = availableModels.length;
+      setApiStatus('ok', 'Connected · <b style="color:var(--a)">' + n + '</b> model' + (n === 1 ? '' : 's'));
+    } else {
+      setApiStatus('warn', 'Could not list models' + (d.error ? ' (' + esc(d.error) + ')' : '') + ' — type the model id below');
+    }
+  } else if (d.ok) {
+    const n = availableModels.length;
     setOllamaStatus('ok', 'Ollama running · <b style="color:var(--a)">' + n + '</b> model' + (n === 1 ? '' : 's'));
     showOllamaInstall('ok');
   } else if (d.installed) {
@@ -750,13 +937,18 @@ async function refreshOllama() {
     setOllamaStatus('err', 'Ollama not found');
     showOllamaInstall('notInstalled');
   }
-  populateModels();
+  refreshPicker();
 }
 
 $('model-trigger').onclick = (e) => { e.stopPropagation(); $('model-dd').classList.toggle('open'); };
 document.addEventListener('click', (e) => { const dd = $('model-dd'); if (dd && !dd.contains(e.target)) dd.classList.remove('open'); });
-$('recheckOllama').onclick = refreshOllama;
-$('ollamaHost').onchange = refreshOllama;
+$('recheckOllama').onclick = refreshModels;
+$('ollamaHost').onchange = refreshModels;
+$('fetchModels').onclick = refreshModels;
+$('apiBaseUrl').onchange = refreshModels;
+$('apiKey').onchange = refreshModels;
+$('apiModel').oninput = onApiModelInput;
+$('provider-seg').querySelectorAll('.seg-btn').forEach((b) => (b.onclick = () => setProvider(b.dataset.provider)));
 
 // ---------- history (two lists: links + runs) ----------
 async function renderHistory() {
@@ -880,6 +1072,7 @@ function selectScan(id) {
   $('run-sub').textContent = s ? [s.url, s.task].filter(Boolean).join('  ·  ') : '';
   updateRunProgress(s);
   renderMain(s);
+  syncSide(s);
 }
 
 // Compact remaining-time estimate: "~45s" / "~3m" / "~2h".
@@ -962,15 +1155,141 @@ async function loadFile(s, name, chip) {
   }
 }
 
+// ---------- reshape: chat over the saved extraction (Phase 2) ----------
+// Decide which side panel the run view shows: the live activity log while a crawl
+// runs, or the reshape chat once it's finished / when viewing a saved link.
+function syncSide(s) {
+  const live = runMode === 'live' && !crawlFinished;
+  const showChat = !live && !!(s && s.files && s.files.length);
+  $('run-activity').classList.toggle('hidden', !live);
+  $('run-chat').classList.toggle('hidden', !showChat);
+  $('run-body').classList.toggle('live', live);
+  $('run-body').classList.toggle('chat', showChat);
+  if (showChat) showChatFor(s);
+}
+
+async function showChatFor(s) {
+  const log = $('rs-log');
+  if (!s.chatMessages) {
+    log.innerHTML = '<div class="rs-empty">loading…</div>';
+    try {
+      const d = await (await fetch('/runs/' + encodeURIComponent(liveRunId) +
+        '/chat?scan=' + encodeURIComponent(s.scanId))).json();
+      s.chatMessages = d.messages || [];
+    } catch { s.chatMessages = []; }
+  }
+  if (activeScanId !== s.scanId) return; // user switched links while we fetched
+  renderChatLog(s);
+}
+
+function renderChatLog(s) {
+  const log = $('rs-log');
+  log.innerHTML = '';
+  if (!s.chatMessages || !s.chatMessages.length) {
+    log.innerHTML = '<div class="rs-empty">No reshapes yet.<br>Ask for a table, a split, or a ' +
+      'filtered subset of this link’s extraction — each answer is saved as a new file you can reuse.</div>';
+    return;
+  }
+  for (const m of s.chatMessages) log.appendChild(chatBubble(s, m));
+  log.scrollTop = log.scrollHeight;
+}
+
+function chatBubble(s, m) {
+  const wrap = document.createElement('div');
+  const role = m.role === 'user' ? 'user' : 'bot';
+  wrap.className = 'rs-msg ' + role + (m.error ? ' err' : '') + (m.pending ? ' pending' : '');
+  wrap.innerHTML = esc(m.content || '').replace(/\n/g, '<br>');
+  if (m.files && m.files.length) {
+    const files = document.createElement('div');
+    files.className = 'rs-files';
+    for (const name of m.files) {
+      const chip = document.createElement('span');
+      chip.className = 'rs-file';
+      chip.textContent = name;
+      chip.onclick = () => loadChatFile(s, name);
+      files.appendChild(chip);
+    }
+    wrap.appendChild(files);
+  }
+  return wrap;
+}
+
+async function loadChatFile(s, name) {
+  const viewer = $('run-viewer');
+  viewer.innerHTML = '<div class="empty">loading…</div>';
+  try {
+    const r = await fetch('/runs/' + encodeURIComponent(liveRunId) +
+      '/chatfile?scan=' + encodeURIComponent(s.scanId) + '&name=' + encodeURIComponent(name));
+    viewer.innerHTML = '<div class="md-body">' + renderMarkdown(await r.text()) + '</div>';
+  } catch {
+    viewer.innerHTML = '<div class="empty">could not load file</div>';
+  }
+}
+
+async function sendReshape() {
+  const s = getScan(activeScanId);
+  if (!s) return;
+  const ta = $('rs-msg');
+  const msg = ta.value.trim();
+  if (!msg) return;
+  if (!selectedModel) { alert('Select a model on the setup screen first.'); return; }
+  ta.value = ''; ta.style.height = '';
+  s.chatMessages = s.chatMessages || [];
+  s.chatMessages.push({ role: 'user', content: msg });
+  const pending = { role: 'assistant', content: 'Reshaping…', pending: true };
+  s.chatMessages.push(pending);
+  renderChatLog(s);
+  const btn = $('rs-send'); btn.disabled = true;
+  const body = { runId: liveRunId, scanId: s.scanId, message: msg, model: selectedModel, provider };
+  if (provider === 'openai') {
+    body.baseUrl = $('apiBaseUrl').value.trim();
+    const k = $('apiKey').value.trim();
+    if (k) body.apiKey = k;
+  } else {
+    body.host = $('ollamaHost').value.trim() || OLLAMA_DEFAULT;
+  }
+  try {
+    const r = await fetch('/reshape', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+    let reply = data.reply || ((data.files || []).length ? 'Done.' : '(no response)');
+    if (data.truncated) reply += '\n\n(Only the first part of a large extraction was used.)';
+    const idx = s.chatMessages.indexOf(pending);
+    s.chatMessages[idx] = { role: 'assistant', content: reply, files: (data.files || []).map((f) => f.filename) };
+    if (activeScanId === s.scanId) {
+      renderChatLog(s);
+      const files = s.chatMessages[idx].files;
+      if (files && files.length) loadChatFile(s, files[0]); // auto-open the first new file
+    }
+  } catch (e) {
+    const idx = s.chatMessages.indexOf(pending);
+    s.chatMessages[idx] = { role: 'assistant', content: 'Error: ' + (e.message || e), error: true };
+    if (activeScanId === s.scanId) renderChatLog(s);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+$('rs-form').addEventListener('submit', (e) => { e.preventDefault(); sendReshape(); });
+$('rs-msg').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReshape(); }
+});
+$('rs-msg').addEventListener('input', (e) => {
+  const t = e.target; t.style.height = 'auto'; t.style.height = Math.min(120, t.scrollHeight) + 'px';
+});
+
 // ---------- open a saved run / single link (view mode) ----------
 function enterRunView({ live }) {
   showView('run');
   runMode = live ? 'live' : 'view';
-  $('run-activity').classList.toggle('hidden', !live);
-  $('run-body').classList.toggle('live', live);
+  crawlFinished = false;
   $('stop').classList.toggle('hidden', !live);
   $('status').textContent = live ? 'running' : 'viewing';
   clearRun();
+  syncSide(null);
 }
 
 async function openRun(id) {
@@ -1090,6 +1409,8 @@ function handle(ev) {
       $('status').textContent = 'done';
       $('stop').classList.add('hidden');
       logLine('<b>done</b> — ' + (ev.stats ? ev.stats.pages : 0) + ' page(s)');
+      crawlFinished = true;
+      syncSide(getScan(activeScanId)); // crawl over → offer reshape on the active link
       break;
   }
 }
@@ -1103,7 +1424,12 @@ function connect() {
 $('start').onclick = async () => {
   const targets = collectTargets();
   if (!targets.length) { alert('Add at least one link.'); return; }
-  if (!selectedModel) { alert('Select a model first. If the list is empty, make sure Ollama is running, then Re-check.'); return; }
+  if (!selectedModel) {
+    alert(provider === 'openai'
+      ? 'Set a model id first. Enter the base URL (+ key), then Fetch models or type the id.'
+      : 'Select a model first. If the list is empty, make sure Ollama is running, then Re-check.');
+    return;
+  }
   const options = collectOptions();
 
   // enter live run view
@@ -1135,10 +1461,18 @@ $('stop').onclick = async () => {
 try {
   const savedHost = localStorage.getItem('docdna.host');
   if (savedHost) $('ollamaHost').value = savedHost;
+  const savedBase = localStorage.getItem('docdna.baseUrl');
+  if (savedBase) $('apiBaseUrl').value = savedBase;
+  const savedKey = localStorage.getItem('docdna.apiKey');
+  if (savedKey) $('apiKey').value = savedKey;
+  const savedApiModel = localStorage.getItem('docdna.model.openai');
+  if (savedApiModel) $('apiModel').value = savedApiModel;
   selectedModel = localStorage.getItem('docdna.model') || '';
 } catch {}
 renderHistory();
-refreshOllama();
+let savedProvider = 'ollama';
+try { savedProvider = localStorage.getItem('docdna.provider') || 'ollama'; } catch {}
+setProvider(savedProvider); // sets up the active provider's blocks + probes models
 </script>
 </body>
 </html>

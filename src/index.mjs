@@ -11,18 +11,20 @@
 import { createHash } from 'node:crypto';
 import { runDocsProfile } from './profiles/docs.mjs';
 import { crawlPageWithEngine } from './engine/crawl-page.mjs';
-import { aiInterpretTask } from './engine/decide.mjs';
-import { applyExclusions } from './extract.mjs';
-import { planFiles, transformFiles } from './lib/layout.mjs';
+import { assembleScan } from './lib/layout.mjs';
 import { saveRun, scanIdFor } from './lib/runs.mjs';
 import { closeBrowser } from './lib/browser.mjs';
 import { normalizeUrl, inScope, pathOf, originOf, hostOf } from './lib/url.mjs';
 import { isDocsTask } from './lib/task.mjs';
+import { resolveLlm } from './lib/llm.mjs';
 
 export const DEFAULT_OPTIONS = {
   task: 'Extract the complete documentation.',
   model: 'qwen3',
+  provider: 'ollama', // 'ollama' (local) | 'openai' (any OpenAI-compatible API: URL + key)
   ollamaHost: undefined, // override the Ollama server URL (default: http://127.0.0.1:11434)
+  baseUrl: undefined, // OpenAI-compatible API base URL (provider 'openai')
+  apiKey: undefined, // API key (provider 'openai'); falls back to DOCDNA_API_KEY / OPENAI_API_KEY
   browser: 'auto', // 'never' | 'auto' | 'always'
   concurrency: 4,
   maxPages: 0, // 0 = unlimited
@@ -97,6 +99,9 @@ export function crawlDocs(targets, options = {}) {
   opts.concurrency = Math.max(1, Number(opts.concurrency) || 1);
   opts.maxPages = Math.max(0, Number(opts.maxPages) || 0);
   opts.maxActions = Math.max(1, Number(opts.maxActions) || 1);
+  // Resolve the model provider once; the engine reads ctx.options.llm and stays
+  // provider-agnostic (Ollama or any OpenAI-compatible API).
+  opts.llm = resolveLlm(opts);
 
   const list = normalizeTargets(targets, opts.task);
   const stream = createEventStream();
@@ -133,32 +138,6 @@ export function crawlDocs(targets, options = {}) {
     resolveResult = r;
   });
 
-  // Interpret each scan's task ONCE into faithful output directives (e.g.
-  // "don't include images" -> exclude.images). Enforced centrally in addPage so
-  // EVERY page source (llms-full, sitemap, engine, static fallback) honours it.
-  // Cached per task string; model failure degrades to the deterministic backstop
-  // inside aiInterpretTask, never aborts the crawl.
-  const _directiveCache = new Map();
-  async function interpretTask(task) {
-    if (_directiveCache.has(task)) return _directiveCache.get(task);
-    let d;
-    try {
-      d = await aiInterpretTask({ model: opts.model, task, host: opts.ollamaHost });
-    } catch {
-      d = { exclude: { images: false, links: false } };
-    }
-    _directiveCache.set(task, d);
-    const ex = (d && d.exclude) || {};
-    if (ex.images || ex.links) {
-      const parts = [ex.images && 'images', ex.links && 'links'].filter(Boolean).join(', ');
-      emit({ type: 'action', action: 'exclude', detail: 'excluding ' + parts + ' (task directive)' });
-    }
-    if (d && d.transform && d.transform.shape) {
-      emit({ type: 'action', action: 'transform', detail: 'output shape: ' + d.transform.shape });
-    }
-    return d;
-  }
-
   function emit(ev) {
     // Stamp the active scan so consumers (UI/CLI) can route every event to the
     // right link, without the engine/profiles having to know about scans.
@@ -191,7 +170,6 @@ export function crawlDocs(targets, options = {}) {
     emit,
     shouldStop,
     currentScan: null,
-    directives: null, // faithful task exclusions for the active scan (set per scan)
     progress: { done: 0, total: 0 },
     // Open a scan: it becomes the target for addPage/dedup/progress + event tags.
     beginScan(scan) {
@@ -214,18 +192,6 @@ export function crawlDocs(targets, options = {}) {
       const scan = ctx.currentScan;
       if (!scan) return;
       if (opts.maxPages > 0 && scan.pages.length >= opts.maxPages) return;
-      // Enforce the scan's faithful task exclusions ("don't include images")
-      // before dedup/output, so it applies uniformly to every page source and
-      // the dedup signature sees the same content the file will. Verbatim-safe.
-      const ex = (ctx.directives && ctx.directives.exclude) || null;
-      if (ex && (ex.images || ex.links)) {
-        const stripped = applyExclusions(page.markdown || '', ex);
-        page = {
-          ...page,
-          markdown: stripped,
-          meta: { ...(page.meta || {}), bytes: Buffer.byteLength(stripped, 'utf8') },
-        };
-      }
       // Skip pages whose content duplicates one already captured in THIS scan
       // (the same page reached via throwaway query params like ?version=). The
       // signature ignores link/URL targets so near-identical pages collapse too.
@@ -262,7 +228,6 @@ export function crawlDocs(targets, options = {}) {
         if (stopped) break;
         ctx.beginScan(scan);
         emit({ type: 'site', url: scan.url, task: scan.task, title: scan.title });
-        scan._directives = ctx.directives = await interpretTask(scan.task);
         const target = { url: scan.url, task: scan.task };
         if (isDocsTask(scan.task)) {
           await runDocsProfile(target, ctx);
@@ -281,24 +246,13 @@ export function crawlDocs(targets, options = {}) {
       // layout), so two links behave like two separate runs grouped under one.
       for (const scan of scans) {
         try {
-          const dir = scan._directives || {};
           if (!scan.pages.length) {
             scan.files = [];
           } else {
-            // The general block router decides ALL file layout from the task +
-            // the actual content (single / per-page / by-category / images-with-
-            // or-without-their-text / duplicate-into-two-files / …).
-            scan.files = await planFiles({ model: opts.model, task: scan.task, pages: scan.pages, host: opts.ollamaHost });
-            // Opt-in output transform ("…as a table"). Grounded + self-targeting;
-            // a no-op unless the task explicitly requested a shape.
-            if (dir.transform && scan.files.length) {
-              scan.files = await transformFiles(scan.files, {
-                model: opts.model,
-                task: scan.task,
-                transform: dir.transform,
-                host: opts.ollamaHost,
-              });
-            }
+            // Phase 1 output: one consolidated, VERBATIM .md per link. No splitting,
+            // filtering or reshaping happens here — that is Phase 2 ("reshape", the
+            // chat over these saved files). The crawl stays faithful by construction.
+            scan.files = assembleScan({ task: scan.task, pages: scan.pages });
           }
         } catch (err) {
           scan.files = [];
