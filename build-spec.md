@@ -109,7 +109,7 @@ targets:
   browser: 'never' | 'auto' | 'always',  // default "auto" — lazy-load Playwright only when needed
   concurrency: number, // parallel page fetches. Default: 4.
   maxPages: number,    // safety cap. Default: 0 (unlimited).
-  maxActions: number,  // per-page action cap for the engine. Default: 15.
+  maxActions: number,  // per-page action cap for the engine. Default: 40.
   include: string | RegExp,  // only crawl URLs matching this
   exclude: string | RegExp,  // skip URLs matching this
   cacheDir: string,    // override the runs-cache root (default <project>/.sagecrawl/runs)

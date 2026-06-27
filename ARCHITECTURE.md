@@ -359,7 +359,7 @@ under `profiles/docs/framework/` are **legacy/unused** — the engine is univers
 | `browser` | `auto` | `never` \| `auto` \| `always` |
 | `concurrency` | `4` | Parallel page renders |
 | `maxPages` | `0` | Per-scan page cap (0 = unlimited) |
-| `maxActions` | `15` | Per-page reveal action budget |
+| `maxActions` | `40` | Per-page reveal action budget (a ceiling; simple pages stop early, disabled controls are skipped) |
 | `include` / `exclude` | — | Regex URL scope filters |
 | `save` | `false` | Persist the run to the cache. CLI/UI set this; a library call stays in memory unless set (or a `cacheDir` is given) |
 | `cacheDir` | `<cwd>/.sagecrawl/runs` | Where to save when saving is on |

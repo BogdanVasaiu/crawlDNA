@@ -31,7 +31,9 @@ export const DEFAULT_OPTIONS = {
   browser: 'auto', // 'never' | 'auto' | 'always'
   concurrency: 4,
   maxPages: 0, // 0 = unlimited
-  maxActions: 15,
+  maxActions: 40, // per-page reveal action cap. A ceiling, not a target: simple pages
+  // stop early when no controls remain; stateful pages (paginators, calendar months,
+  // many tabs) need the headroom. Disabled controls are skipped so it isn't wasted.
   include: undefined,
   exclude: undefined,
   // Persistence is OPT-IN. As a library, sagecrawl writes NOTHING by default: the full

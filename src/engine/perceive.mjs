@@ -139,6 +139,17 @@ export async function perceive(page, { maxText = 2500, maxRevealers = 150, maxLi
         const style = getComputedStyle(el);
         const href = el.getAttribute('href') || '';
 
+        // Skip DISABLED controls — clicking them reveals nothing, so they only burn
+        // the action budget (e.g. a calendar's non-selectable days, a greyed-out
+        // "next" at the last page). Universal UX signals only — not site structure:
+        // the disabled property, aria-disabled, a disabled/inactive/not-selectable
+        // class token, or a not-allowed cursor / pointer-events:none on the element.
+        const ariaDisabled = (el.getAttribute('aria-disabled') || '').toLowerCase() === 'true';
+        const classDisabled = /(^|[\s_-])(disabled|inactive|not[-_]?selectable)([\s_-]|$)/i.test(cls);
+        if (el.disabled === true || ariaDisabled || classDisabled || style.cursor === 'not-allowed' || style.pointerEvents === 'none') {
+          continue;
+        }
+
         // Any <a> with a real destination is a NAVIGATION candidate — it's
         // discovered as a link and the AI decides whether it's a real page.
         // It's never treated as an in-page revealer. Only href-less <a> and a

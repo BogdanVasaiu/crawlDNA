@@ -209,9 +209,13 @@ export async function revealAll(page, ctx, url, task) {
 
     // (B) EXPLORE THE CURRENT VIEW: click each un-clicked leaf (in-place reveal) and
     // classify controls. Runs for the target view (collect its content), open-ended
-    // tasks (extract everything), or when a targeted walk can't proceed.
+    // tasks (extract everything), or when a targeted walk can't proceed. The planned
+    // direction paginator is excluded here so first-touch never overshoots the target
+    // (it's only ever applied by the targeted walk in (A) or the open-ended sweep in (C)).
     if (!next) {
-      next = approved.find((r) => !doneLeaf.has(r.signature) && !advancing.has(r.signature));
+      next = approved.find(
+        (r) => !doneLeaf.has(r.signature) && !advancing.has(r.signature) && !(navPlan && r.signature === navPlan.directionSig),
+      );
     }
 
     // (C) No leaves left here.

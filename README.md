@@ -180,7 +180,7 @@ Array<{ url, task? }>                  // many targets, each with its own task
 | `browser` | `"auto"` | `never` \| `auto` \| `always` (lazy-loads Playwright) |
 | `concurrency` | `4` | parallel page fetches |
 | `maxPages` | `0` | safety cap (0 = unlimited) |
-| `maxActions` | `15` | per-page action cap for the engine |
+| `maxActions` | `40` | per-page reveal action cap (a ceiling — simple pages stop early) |
 | `include` | — | only crawl URLs matching (string regex or `RegExp`) |
 | `exclude` | — | skip URLs matching |
 | `save` | `false` | persist the run to the cache. **Library default: off** (result returned in memory). The CLI/UI turn it on |
