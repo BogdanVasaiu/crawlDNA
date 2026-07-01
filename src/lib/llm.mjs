@@ -253,9 +253,12 @@ async function openaiChat(llm, system, user, schema) {
  *
  * @param {{provider:string, model:string, baseUrl:string, apiKey:string}} llm
  * @param {object} [schema]  optional JSON schema → constrained/guaranteed JSON output
+ * @param {string} [kind]    a label for WHAT this call is (reveal/scope/links/nav-plan/
+ *                           reshape/health) — reported to the usage sink so tokens can be
+ *                           attributed per call type, not just totalled (see src/eval).
  * @returns {Promise<string>}
  */
-export async function chat(llm, system, user, schema = null) {
+export async function chat(llm, system, user, schema = null, kind = '') {
   if (!llm || !llm.model) throw new Error('no model selected');
   const provider = llm.provider === 'openai' ? 'openai' : 'ollama';
   // Meter concurrent calls per provider (tight for local, generous for remote).
@@ -264,10 +267,12 @@ export async function chat(llm, system, user, schema = null) {
       ? await openaiChat(llm, system, user, schema)
       : await ollamaChat(llm, system, user, schema);
     // Report token usage to an optional sink on the descriptor (set by the crawl)
-    // so cost can be approximated. Metering must never break the actual call.
+    // so cost can be approximated. The `kind` lets the sink break the total down by
+    // call type (which judgment actually spends the tokens). Metering must never
+    // break the actual call.
     if (typeof llm.__onUsage === 'function') {
       try {
-        llm.__onUsage({ provider, inputTokens: usage.inputTokens || 0, outputTokens: usage.outputTokens || 0 });
+        llm.__onUsage({ provider, kind: kind || 'other', inputTokens: usage.inputTokens || 0, outputTokens: usage.outputTokens || 0 });
       } catch {
         /* ignore */
       }
@@ -291,7 +296,7 @@ export async function checkModel(llm) {
   if (!llm || !llm.model) return { ok: false, reason: 'no model selected' };
   if (llm.provider === 'openai' && !llm.baseUrl) return { ok: false, reason: 'no API base URL set' };
   try {
-    await chat(llm, 'Reply with the single word OK.', 'ping');
+    await chat(llm, 'Reply with the single word OK.', 'ping', null, 'health');
     return { ok: true };
   } catch (err) {
     return { ok: false, reason: String((err && err.message) || err).slice(0, 200) };

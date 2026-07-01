@@ -63,6 +63,11 @@ Options:
   --min-relevance <0-1>  focus on task: skip links below this task-relevance (default: ${DEFAULT_OPTIONS.minRelevance} = off)
   --ollama-host <url>    Ollama server URL (default: http://127.0.0.1:11434)
   --cache-dir <dir>      override the runs-cache location
+  --per-document         also emit one identifiable .md per page + index.md + a JSONL
+                         (for programmatic use); the consolidated .md is still written
+  --near-dup-hamming <n> collapse near-duplicate pages within this SimHash Hamming
+                         distance (default: ${DEFAULT_OPTIONS.nearDupHamming} = off; exact dupes only). 3 ≈ recommended.
+                         Opt-in: can drop a page whose unique content is small
   --port <n>             port for \`serve\` (default: 4000)
 
 Reshape (Phase 2 — over a saved run):
@@ -98,6 +103,8 @@ const OPTION_CONFIG = {
   'min-relevance': { type: 'string' },
   'ollama-host': { type: 'string' },
   'cache-dir': { type: 'string' },
+  'per-document': { type: 'boolean' },
+  'near-dup-hamming': { type: 'string' },
   port: { type: 'string' },
   ask: { type: 'string' },
   scan: { type: 'string' },
@@ -146,6 +153,8 @@ function optionsFromFlags(values) {
   if (values['min-relevance'] != null) o.minRelevance = Number(values['min-relevance']);
   if (values['ollama-host']) o.ollamaHost = values['ollama-host'];
   if (values['cache-dir']) o.cacheDir = values['cache-dir'];
+  if (values['per-document']) o.perDocument = true;
+  if (values['near-dup-hamming'] != null) o.nearDupHamming = Number(values['near-dup-hamming']);
   if (values.task && values.task.length === 1) o.task = values.task[0];
   return o;
 }

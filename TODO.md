@@ -85,19 +85,19 @@ la modifica e confrontare numero di pagine tenute, byte totali, e i blocchi rive
 | 2 | Output JSON vincolato (constrained decoding) | consumi + precisione | Basso | ✅ fatto (2026-07-01, da verificare dal vivo) |
 | 3 | Trigger "documentazione" universale (multilingua) | consumi + precisione | Basso-Medio | ✅ fatto (2026-07-01) |
 | 4 | Prompt caching del prefisso istruzioni (API remote) | consumi | Basso | ☐ da fare |
-| 5 | Riuso contesto browser per worker (cache asset) | consumi (tempo+banda) | Basso-Medio | ☐ da fare |
+| 5 | Riuso contesto browser per worker (cache asset) | consumi (tempo+banda) | Basso-Medio | ✅ fatto (2026-07-01, verificato con browser reale) |
 | 6 | Crawl incrementale (ETag / Last-Modified / lastmod) | consumi (enorme per refdna) | Medio | ☐ da fare |
-| 7 | Dedup near-duplicate con SimHash | precisione output + consumi | Medio | ☐ da fare |
-| 8 | Estrazione stile Trafilatura (pruning per densità link) | precisione | Medio | ☐ da fare |
+| 7 | Dedup near-duplicate con SimHash | precisione output + consumi | Medio | ✅ fatto (2026-07-01, opt-in) |
+| 8 | Estrazione stile Trafilatura (pruning per densità link) | precisione | Medio | ✅ fatto (2026-07-01) |
 | 9 | Rinforzo reveal: accessibility-tree / Set-of-Marks | precisione (casi difficili) | Alto | ☐ da fare |
 
 **Gruppo B — Rispetto della task & fruibilità dell'output (generale)**
 
 | # | Titolo | Effetto | Sforzo | Stato |
 |---|--------|---------|--------|-------|
-| 10 | Output per-documento identificabile + metadata (opzione) | fruibilità | Medio | ☐ da fare |
+| 10 | Output per-documento identificabile + metadata (opzione) | fruibilità | Medio | ✅ fatto (2026-07-01) |
 | 11 | Reshape (Fase 2): fedeltà verificata | rispetto-task | Medio | ☐ da fare |
-| 12 | Harness di misurazione (completezza / rispetto-task / token) | trasversale — abilita tutto | Medio | ☐ da fare |
+| 12 | Harness di misurazione (completezza / rispetto-task / token) | trasversale — abilita tutto | Medio | ✅ fatto (2026-07-01, da verificare dal vivo) |
 
 **Da fare per primi (qualità del crawl):** #1, #2, #3.
 **Per dimostrare il valore (misurabile):** #12.
@@ -274,7 +274,29 @@ mostra una quota crescente di input cachato dopo le prime chiamate.
 ---
 
 ## #5 — Riuso contesto browser per worker
-**Effetto:** consumi (tempo + banda) · **Sforzo:** Basso-Medio · **Stato:** ☐
+**Effetto:** consumi (tempo + banda) · **Sforzo:** Basso-Medio · **Stato:** ✅ FATTO (2026-07-01)
+
+> **Implementato.** [src/lib/browser.mjs](src/lib/browser.mjs) ha ora una **pool di
+> contesti**: `newPage()` prende un contesto **idle riusabile** (o ne crea uno) e ritorna
+> `{ page, context, release }`; `release()` chiude la pagina e **rimette il contesto nella
+> pool** per riuso. La pool è dimensionata sulla concurrency (`configureContextPool`,
+> chiamata in [index.mjs](src/index.mjs)), così **ogni worker tiene il suo contesto** →
+> parallelismo invariato, ma la **cache HTTP è condivisa** tra le pagine dello stesso sito
+> (CSS/JS scaricati una volta). Lo SNIFFER è ora su `addInitScript` **una volta per
+> contesto**, non per pagina. I due chiamanti ([crawl-page.mjs](src/engine/crawl-page.mjs),
+> [fetcher.mjs](src/lib/fetcher.mjs)) usano `release()` in `finally` (idempotente).
+> Contesto riciclato dopo `_maxUses` (100) pagine per igiene.
+>
+> _Perché NON perde contenuto (regola #1):_ il riuso condivide **solo la cache asset**; non
+> cambia cosa rende una pagina, perché il motore (a) apre una `page` nuova e naviga da zero
+> per ogni URL, e (b) clicca **tutti** i controlli reveal a prescindere dallo stato client
+> ricordato → cookie/localStorage accumulati non possono nascondere contenuto (una tab
+> "ricordata" viene comunque cliccata; un tour di primo-accesso è chrome, non contenuto). Il
+> consent è comunque dismesso per-pagina. **Verificato con browser reale** (scratchpad,
+> 15+3 asserzioni): riuso identità/parallelismo/cap/idempotenza, e **la vittoria** — su 5
+> pagine con un contesto riusato il CSS condiviso è scaricato **1 volta vs 5** con contesto
+> fresco per pagina; e2e crawl (concurrency 2, 4 pagine) = **2 fetch CSS vs 4**, contenuto
+> verbatim invariato. ⏳ **Da confermare dal vivo** su un sito docs grande (tempo medio/pagina).
 
 **Problema oggi.** `newPage()` ([src/lib/browser.mjs:87](src/lib/browser.mjs)) apre un
 **contesto nuovo per ogni pagina** → la cache HTTP non è condivisa → CSS/JS comuni del
@@ -319,7 +341,33 @@ identico per le pagine non cambiate.
 ---
 
 ## #7 — Dedup near-duplicate con SimHash
-**Effetto:** precisione output + consumi · **Sforzo:** Medio · **Stato:** ☐
+**Effetto:** precisione output + consumi · **Sforzo:** Medio · **Stato:** ✅ FATTO (2026-07-01, opt-in)
+
+> **Implementato** in modo conservativo (stesso pattern del #1: default = rischio zero).
+> - **Primitiva** [src/lib/simhash.mjs](src/lib/simhash.mjs): SimHash 64-bit (Charikar) puro,
+>   zero dipendenze — feature = shingle di parole pesati per frequenza, hash 64-bit via due
+>   murmur3-32 (niente BigInt nel loop caldo), `hamming()` con popcount SWAR, `isNearDup()`.
+> - **Gate near-dup opt-in** in [index.mjs](src/index.mjs) `addPage`: nuova opzione
+>   **`nearDupHamming`** (default **0 = off**, solo dedup esatto sha1 = comportamento attuale).
+>   Quando > 0, una pagina il cui SimHash è entro quella distanza di Hamming da una già tenuta
+>   (nella stessa scan) viene collassata. Calcolato sulla stessa signature link/URL-stripped
+>   dell'sha1, così nav/URL diversi non nascondono un near-dup. Esposto in CLI
+>   (`--near-dup-hamming`), tipi (`CrawlOptions.nearDupHamming`), README.
+>
+> _Perché opt-in e NON default:_ collassare pagine "quasi identiche" può eliminare una pagina
+> il cui bit unico è piccolo (due pagine API con lo stesso template) → contro "mai perdere
+> contenuto". Il default (0) non scarta **nulla** oltre ai doppioni esatti; l'aggressività è
+> una scelta esplicita dell'utente. _Deliberatamente NON fatto_ (documentato): (a) near-dup a
+> livello di **BlockAccumulator** — collasserebbe le **varianti reveal** (npm vs yarn), che
+> sono il gioiello del crawler; l'exact-dedup normalizzato già toglie i near-dup banali;
+> (b) **pre-fetch statico + skip-render** — rischia di saltare pagine con contenuto nascosto
+> diverso (contro il differenziatore reveal, vedi [[firebase-perf-and-fixes]]).
+>
+> **Verificato** (scratchpad, 15 asserzioni): SimHash identico→0, near-dup≤6, unrelated≥12 e
+> near<unrelated; hamming/popcount corretti; **default (0) tiene /a /b /c** (near-dup NON
+> collassato = nessuna perdita); **opt-in (3) collassa /b in /a MA tiene /c** (contenuto unico
+> mai scartato). ⏳ **Da confermare dal vivo** con A/B su un sito reference (0 perdita di
+> contenuto unico) via harness #12.
 
 **Problema oggi.** Il dedup scarta solo i doppioni **esatti** (sha1 del contenuto
 normalizzato in [src/index.mjs](src/index.mjs) `addPage`) e **dopo** aver renderizzato.
@@ -347,7 +395,28 @@ A/B su un sito di riferimento, confermare 0 perdita di contenuto unico.
 ---
 
 ## #8 — Estrazione stile Trafilatura (pruning per densità di link)
-**Effetto:** precisione · **Sforzo:** Medio · **Stato:** ☐
+**Effetto:** precisione · **Sforzo:** Medio · **Stato:** ✅ FATTO (2026-07-01)
+
+> **Implementato** in [src/extract.mjs](src/extract.mjs), entrambe le proposte, senza
+> neurale e senza regole per-sito:
+> - **Pruning per densità di link** (`pruneNavByLinkDensity`): rimuove i container
+>   (`ul/ol/nav/div/section`) che sono **quasi tutti link** (≥80% del testo è anchor-text)
+>   con **pochissimo testo proprio** (≤200 char non-link) e **≥4 link** — cioè navigazione
+>   in-content che la lista-classi fissa manca. Segnale universale (un rapporto, mai un nome
+>   di classe). Rimuove solo il match **più esterno** (niente nodi già staccati).
+> - **Cascade con fallback** (la forma più sicura): estraggo `full` (baseline, PRIMA del
+>   pruning) e, se qualcosa è stato potato, `pruned`; tengo il `pruned` **solo se ha
+>   preservato ≥98% del testo-parola non-link** (`contentWordLen` esclude di proposito il
+>   testo dei link, così togliere nav non conta come perdita, togliere prosa/codice sì).
+>   Altrimenti ricado sul `full`. → il pruning **non può mai perdere prosa/codice** (regola #1).
+>
+> **Verificato** (scratchpad, 27 asserzioni, no browser/modello): nav non-classata potata e
+> articolo tenuto; liste-contenuto (link + descrizioni) PRESERVATE (gate densità + cascade);
+> menu (testo+prezzi) intatti; prosa con link inline intatta; pagina mista (nav potata MA la
+> lista-contenuto sulla stessa pagina sopravvive); nessuna regressione su articolo semplice +
+> code fence. Le 126 asserzioni delle suite precedenti restano verdi (estrazione usata in
+> tutto il crawl). NIENTE estrattore AI. ⏳ **Da confrontare dal vivo** su pagine doc reali
+> (byte + ispezione) con l'harness #12.
 
 **Problema oggi.** `extract.mjs` sceglie "il nodo più denso di testo"
 ([src/extract.mjs:98](src/extract.mjs)) e toglie una **lista fissa di classi-chrome**
@@ -399,8 +468,28 @@ Skyvern (vision).
 ---
 
 ## #10 — Output per-documento identificabile + metadata (opzione)
-**Effetto:** fruibilità · **Sforzo:** Medio · **Stato:** ☐
+**Effetto:** fruibilità · **Sforzo:** Medio · **Stato:** ✅ FATTO (2026-07-01)
 **(Era già un item strutturale rimandato.)**
+
+> **Implementato.** Nuova opzione **`perDocument`** (default `false`). Quando ON, oltre al
+> `.md` consolidato, il crawl impacchetta **un documento per pagina**: `assemblePerDocument`
+> ([src/lib/layout.mjs](src/lib/layout.mjs)) produce, per ogni pagina tenuta, un record
+> `{ id, url, title, fetchedAt, bytes, markdown (VERBATIM), headings, file }` con **id
+> stabile** derivato dall'URL (de-colliso), un **`index.md`** stile llms.txt e un
+> **`documents.jsonl`** machine-readable. Su disco ([output.mjs](src/lib/output.mjs)
+> `writeBundle`): sottocartella `documents/` con un `.md` per pagina (front-matter
+> url/title/fetchedAt + corpo verbatim) + `index.md` + `documents.jsonl` a livello di scan;
+> il manifest ([runs.mjs](src/lib/runs.mjs)) elenca i documenti (solo metadata + headings).
+> In memoria: `result.scans[].documents` (disponibile anche senza save). Esposto in CLI
+> (`--per-document`) e nei tipi (`Document`, `Scan.documents`, `CrawlOptions.perDocument`).
+>
+> _Filosofia rispettata:_ è **puro re-impacchettamento** — non tocca crawl né verbatim, e il
+> consolidato di default è invariato (nessun campo `documents` nel manifest quando OFF).
+> **Criterio d'accettazione verificato** (scratchpad, 34 asserzioni, no browser/modello): la
+> UNIONE dei corpi per-documento == pagine verbatim == contenuto del consolidato (nessuna
+> perdita), sia in memoria sia su disco; JSONL valido 1-record-per-riga che punta ai file;
+> id stabili; default OFF invariato. _Nota:_ UI non ancora esposta (opzionale/repo-only; core
+> + CLI + libreria coprono l'uso programmatico — è lì il valore).
 
 **Problema oggi.** `assembleScan` ([src/lib/layout.mjs](src/lib/layout.mjs)) produce
 **UN solo .md consolidato** per scan (Firebase = 9.5MB). Per **qualsiasi consumatore
@@ -459,7 +548,34 @@ contesto).
 ---
 
 ## #12 — Harness di misurazione (completezza / rispetto-task / token)
-**Effetto:** trasversale — **abilita di valutare tutti gli altri** · **Sforzo:** Medio · **Stato:** ☐
+**Effetto:** trasversale — **abilita di valutare tutti gli altri** · **Sforzo:** Medio · **Stato:** ✅ FATTO (2026-07-01)
+
+> **Implementato.** Tre pezzi, tutti verificati offline (47 asserzioni node, senza
+> modello né browser — `fetch` stubbato):
+> - **(c) Token per TIPO di chiamata.** `chat(llm, system, user, schema?, kind?)`
+>   ([src/lib/llm.mjs](src/lib/llm.mjs)) ora passa un `kind` al sink `__onUsage`; le 5
+>   chiamate di giudizio in [decide.mjs](src/engine/decide.mjs) lo etichettano
+>   (`reveal`/`scope`/`links`/`nav-plan`/`reshape`) e l'health-ping è `health`.
+>   [src/index.mjs](src/index.mjs) accumula un `tokens.byKind` accanto ai totali; la
+>   persistenza ([runs.mjs](src/lib/runs.mjs) `aggregateTokens`) fonde il `byKind` tra
+>   scan. Così si vede **dove** vanno i token, non solo il totale. `index.d.ts`
+>   aggiornato (`TokenUsage.byKind` + `tokens` su `Stats`).
+> - **(a)+(b) Metriche pure** in [src/eval/metrics.mjs](src/eval/metrics.mjs)
+>   (dependency-free, deterministiche): `revealCoverage` (contenuto nascosto noto
+>   presente?), `sitemapCoverage` (+ `diffRuns` tra run), `taskRespect` (recall/precision
+>   stile SWDE), `tokenBreakdown`. Assemblate in [src/eval/report.mjs](src/eval/report.mjs)
+>   (`evaluate` + `formatReport`).
+> - **Runner** [scripts/eval.mjs](scripts/eval.mjs) (`npm run eval`): crawla una GOLDEN
+>   SPEC, recupera la sitemap (inline o live via `collectSitemapUrls`), stampa il report.
+>   Spec di esempio (una doc + una non-doc, come richiesto) in `eval/golden/` +
+>   [eval/README.md](eval/README.md) che documenta lo schema.
+>
+> _Confini onesti tenuti nel codice:_ la completezza assoluta NON è dimostrabile → si
+> misurano PROXY (reveal-noto + copertura sitemap); il rispetto-task si valuta contro un
+> golden set che l'utente fornisce (le spec di esempio sono TEMPLATE da verificare sul
+> sito reale). Il core puro (`src/eval/`) viaggia con l'npm; runner + golden restano
+> repo-only. ⏳ **Da usare dal vivo:** riempire una golden spec con valori verificati e
+> girare `npm run eval -- --model qwen3-coder:30b` prima/dopo un item per avere il numero.
 
 **Problema oggi.** Non c'è modo di **misurare** completezza/rispetto-task/consumi: ogni
 stima (anche le mie) è solo una stima. Senza numeri, non si sa se un item ha migliorato

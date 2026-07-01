@@ -1,0 +1,26 @@
+{
+  "_comment": "EXAMPLE / TEMPLATE — a documentation task. Verify every expect[] value against the live page (or repoint url) before trusting the score. See ../README.md.",
+  "name": "firebase-web-setup",
+  "url": "https://firebase.google.com/docs/web/setup",
+  "task": "Extract the web (JavaScript) setup documentation",
+  "expect": {
+    "_revealNote": "Snippets that appear only after selecting a tab (npm vs CDN) — confirm they are hidden on first paint.",
+    "revealContent": [
+      "npm install firebase"
+    ],
+    "mustInclude": [
+      "initializeApp",
+      "firebaseConfig"
+    ],
+    "_excludeNote": "Other-platform markers a WEB task should drop (iOS/Android).",
+    "mustExclude": [
+      "CocoaPods",
+      "build.gradle"
+    ],
+    "sitemap": false
+  },
+  "options": {
+    "maxPages": 1,
+    "maxActions": 25
+  }
+}

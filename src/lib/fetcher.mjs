@@ -68,8 +68,11 @@ export async function loadHtml(url, { browserMode = 'auto', ctx } = {}) {
 
   // We want (or need) the browser.
   if (await isBrowserAvailable()) {
+    let release;
     try {
-      const { page, context } = await newPage();
+      const p = await newPage();
+      release = p.release;
+      const { page } = p;
       let status = 200;
       try {
         const resp = await page.goto(url, { waitUntil: 'networkidle', timeout: 45000 });
@@ -79,13 +82,14 @@ export async function loadHtml(url, { browserMode = 'auto', ctx } = {}) {
       }
       const html = await page.content();
       const finalUrl = page.url();
-      await context.close();
       return { html, finalUrl, status, rendered: true };
     } catch (err) {
       if (staticRes) {
         return { html: staticRes.text, finalUrl: staticRes.finalUrl, status: staticRes.status, rendered: false, error: err };
       }
       return { html: '', finalUrl: url, status: 0, rendered: false, error: err };
+    } finally {
+      if (release) await release(); // return the context to the pool (reuse its asset cache)
     }
   }
 

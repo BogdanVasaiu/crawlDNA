@@ -199,6 +199,8 @@ Array<{ url, task? }>                  // many targets, each with its own task
 | `exclude` | — | skip URLs matching |
 | `save` | `false` | persist the run to the cache. **Library default: off** (result returned in memory). The CLI/UI turn it on |
 | `cacheDir` | — | where to save when saving is on (default `<cwd>/.sagecrawl/runs`); setting it also turns saving on |
+| `perDocument` | `false` | also package one identifiable `.md` per page (+ `index.md` + `documents.jsonl`) for programmatic use, alongside the consolidated `.md`. Verbatim — see [Output](#output) |
+| `nearDupHamming` | `0` | collapse near-duplicate pages within this SimHash Hamming distance (`0` = off, exact dupes only). **Opt-in** — can drop a page whose unique content is small; `3` ≈ recommended |
 | `onEvent` | — | `(ev) => void` callback |
 
 ### Result
@@ -209,9 +211,14 @@ Array<{ url, task? }>                  // many targets, each with its own task
     scanId, index, url, task, title,
     pages: [ { url, task, title, markdown, meta: { strategy, framework?, fetchedAt, bytes } } ],
     files: [ { filename, title, markdown, bytes, pages: [url, …] } ],  // the verbatim .md, in memory
+    documents: [ { id, url, title, fetchedAt, bytes, markdown, headings, file } ],  // only when perDocument:true
     stats, warnings,
   } ],
-  stats: { pages, durationMs, strategyCounts: { 'docs:llms-full', 'docs:sitemap', 'docs:framework', agent } },
+  stats: {
+    pages, durationMs,
+    strategyCounts: { 'docs:llms-full', 'docs:sitemap', 'docs:framework', agent },
+    tokens: { calls, inputTokens, outputTokens, byKind: { reveal, scope, links, 'nav-plan', … } },  // AI cost, split by call type
+  },
   warnings: [ { url?, reason, message } ],
   run: { id, dir, scans } | null,     // null unless the run was SAVED (see below)
 }
@@ -302,6 +309,24 @@ Each Markdown file starts with a short YAML front-matter block (`task`,
 `generatedAt`, `sources`). Manage saved runs with `sagecrawl runs …` or the Web UI's
 "Previous runs" list.
 
+### Per-document output (opt-in)
+
+For programmatic consumers (a pipeline, an index, a RAG chunker) the single
+consolidated file is awkward. Pass `perDocument: true` (CLI `--per-document`) to
+**also** get one identifiable document per page, alongside the consolidated `.md`:
+
+- `documents/<id>.md` — one file per kept page, each with a small front-matter
+  (`url`, `title`, `fetchedAt`) then the page's **verbatim** Markdown. The `<id>` is
+  stable (derived from the URL).
+- `documents.jsonl` — one machine-readable record per line: `{ id, url, title,
+  fetchedAt, bytes, file, headings }` (an H1–H3 outline per page, for section paths).
+- `index.md` — an llms.txt-style index of everything crawled.
+
+This is **pure repackaging** — the content is identical to the consolidated file
+(the union of the per-document bodies equals it, byte-for-byte per page); nothing is
+filtered or transformed. In the library, `result.scans[].documents` carries the same
+records in memory even when saving is off.
+
 ## Reshape (Phase 2)
 
 The crawl gives you a faithful extraction; **reshape** turns it into whatever you
@@ -319,6 +344,41 @@ sagecrawl reshape <runId> --ask "split the menu into one file per category" --sc
 In the Web UI, open a saved link and use the **Reshape** panel — each answer is
 saved as a new file (under `<runId>/<scan>/chat/`) you can open and reuse. The
 crawl's own files are never modified.
+
+## Measuring quality
+
+An evaluation harness turns the crawler's promises into **numbers you can compare
+before/after a change**: reveal completeness (did known interaction-hidden content
+survive?), sitemap coverage + run diff, task recall/precision against a golden set
+(SWDE-style), and **tokens per call type** (`reveal` / `scope` / `links` / `nav-plan`).
+The scoring in [`src/eval/`](src/eval/) is pure and ships with the package; the runner
+that drives a real crawl is repo-only:
+
+```sh
+npm run eval -- --model qwen3-coder:30b        # scores every eval/golden/*.json
+```
+
+Write one JSON spec per site under `eval/golden/`. See [eval/README.md](eval/README.md)
+for the schema and the honest limits (absolute completeness is not provable — these are
+the standard proxies).
+
+## Tests
+
+The unit suite runs in seconds with **no browser, no model and no network** (the AI
+judgment layer is exercised against a local OpenAI-compatible stub), using Node's
+built-in runner — zero extra dependencies:
+
+```sh
+npm test
+```
+
+It covers extraction (chrome removal, link-density pruning and its never-lose-content
+cascade), URL normalisation/scoping, task-relevance scoring, SimHash near-dup detection,
+the docs-intent detector, output assembly (consolidated + per-document), the LLM
+provider descriptor, the eval metrics, and the AI link/scope/reveal gates' completeness
+contracts (empty verdict honoured, garbage → follow-all, no candidate lost to a batch cap).
+Run it before and after any engine change; a live check on a reference site
+(`npm run eval`) remains the final word for crawl behaviour.
 
 ## License
 

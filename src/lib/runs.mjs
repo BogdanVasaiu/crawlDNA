@@ -71,15 +71,23 @@ function sanitizeOptions(o = {}) {
 const scanPages = (s) => (s && s.stats && s.stats.pages) || (s && s.pages ? s.pages.length : 0) || 0;
 const aggregatePages = (scans) => scans.reduce((n, s) => n + scanPages(s), 0);
 
-/** Sum AI token usage across scans — a fallback when no run-level total is given. */
+/** Sum AI token usage across scans — a fallback when no run-level total is given.
+ *  Merges the per-call-type `byKind` breakdown too, so the saved run keeps WHERE the
+ *  tokens went (reveal/scope/links/nav-plan) and not just the grand total. */
 function aggregateTokens(scans) {
-  const t = { calls: 0, inputTokens: 0, outputTokens: 0 };
+  const t = { calls: 0, inputTokens: 0, outputTokens: 0, byKind: {} };
   for (const s of scans) {
     const u = s && s.stats && s.stats.tokens;
     if (!u) continue;
     t.calls += u.calls || 0;
     t.inputTokens += u.inputTokens || 0;
     t.outputTokens += u.outputTokens || 0;
+    for (const [kind, k] of Object.entries(u.byKind || {})) {
+      const dst = t.byKind[kind] || (t.byKind[kind] = { calls: 0, inputTokens: 0, outputTokens: 0 });
+      dst.calls += k.calls || 0;
+      dst.inputTokens += k.inputTokens || 0;
+      dst.outputTokens += k.outputTokens || 0;
+    }
   }
   return t;
 }
@@ -91,7 +99,7 @@ function buildScanManifest(scan) {
   for (const f of scan.files || []) {
     for (const url of f.pages || []) if (!pageToFile.has(url)) pageToFile.set(url, f.filename);
   }
-  return {
+  const m = {
     scanId: scan.scanId,
     url: scan.url,
     task: scan.task,
@@ -108,6 +116,21 @@ function buildScanManifest(scan) {
       file: pageToFile.get(p.url) || null,
     })),
   };
+  // #10 per-document format (opt-in): metadata-only index of the per-page files, so a
+  // consumer can load pages individually from documents/ + documents.jsonl. Omitted when
+  // the format wasn't produced, so default manifests are unchanged.
+  if (scan.documents && scan.documents.length) {
+    m.documents = scan.documents.map((d) => ({
+      id: d.id,
+      url: d.url,
+      title: d.title,
+      fetchedAt: d.fetchedAt,
+      bytes: d.bytes,
+      file: `documents/${d.file}`,
+      headings: d.headings,
+    }));
+  }
+  return m;
 }
 
 function buildManifest({ id, createdAt, durationMs, targets, options, scans, warnings, tokens }) {
@@ -159,10 +182,16 @@ export async function saveRun({ targets, options, scans = [], durationMs = 0, wa
   await mkdir(dir, { recursive: true });
 
   // Each scan gets its own subfolder with its files + a self-contained manifest.
+  // When the opt-in per-document format was produced (scan._docBundle), it is written
+  // alongside under documents/ + index.md + documents.jsonl (see lib/output.mjs).
   for (const scan of scans) {
     const sid = String(scan.scanId);
     if (!ID_RE.test(sid)) throw new Error(`invalid scan id: ${sid}`);
-    await writeBundle(path.join(dir, sid), { files: scan.files || [], manifest: buildScanManifest(scan) });
+    await writeBundle(path.join(dir, sid), {
+      files: scan.files || [],
+      manifest: buildScanManifest(scan),
+      documents: scan._docBundle || null,
+    });
   }
 
   const manifest = buildManifest({ id, createdAt, durationMs, targets, options, scans, warnings, tokens });

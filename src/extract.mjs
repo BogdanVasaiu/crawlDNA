@@ -132,6 +132,109 @@ export function stripSvgNoise(markdown) {
     .trim();
 }
 
+// --- #8: Trafilatura-style universal cleanup -------------------------------
+// CHROME_SELECTORS above is robust but can miss IN-CONTENT navigation on unusual
+// layouts (an unclassed <ul> of links, a link grid) — leaving nav boilerplate in the
+// output. LINK DENSITY is the universal signal Trafilatura uses: a container that is
+// almost entirely anchors, with little text of its own, is navigation — droppable
+// without naming a class. It is paired with a CASCADE (Barbaresi; SIGIR-2023): keep the
+// pruned "precise" extraction ONLY when it preserved the page's non-link text, else fall
+// back to the un-pruned one — so pruning can NEVER lose real content (project rule #1).
+
+/** Length of a page's NON-LINK, NON-IMAGE word text — the "content" a cascade must not
+ *  lose. Link text and URLs are excluded ON PURPOSE: removing navigation (which is all
+ *  links) must not look like content loss, while removing prose/code must. */
+export function contentWordLen(markdown) {
+  return String(markdown || '')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ') // images
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, ' ') // links: drop BOTH visible text and url
+    .replace(/<https?:\/\/[^>\s]+>/gi, ' ') // autolinks
+    .replace(/[#>|`*_~+\-]/g, ' ') // markdown structural punctuation
+    .replace(/\s+/g, ' ')
+    .trim().length;
+}
+
+/** Remove clearly-navigational, link-dense containers from within the content node.
+ *  Universal (a ratio, never a class name) and bounded (only containers that are almost
+ *  all links with little text of their own). Mutates `content`; returns the count removed. */
+function pruneNavByLinkDensity(content) {
+  const MIN_LINKS = 4; // a couple of links is prose; navigation has many
+  const DENSITY = 0.8; // ≥80% of the text is anchor text → navigation
+  const MAX_NONLINK_CHARS = 200; // and little text of its own (bullets / separators)
+  const matches = [];
+  for (const el of content.querySelectorAll('ul, ol, nav, div, section')) {
+    const anchors = el.querySelectorAll('a');
+    if (anchors.length < MIN_LINKS) continue;
+    const total = textOf(el).length;
+    if (!total) continue;
+    let linkLen = 0;
+    for (const a of anchors) linkLen += textOf(a).length;
+    if (linkLen / total >= DENSITY && total - linkLen <= MAX_NONLINK_CHARS) matches.push(el);
+  }
+  const set = new Set(matches);
+  let removed = 0;
+  for (const el of matches) {
+    // Remove only the OUTERMOST match (skip one nested inside another slated node) so we
+    // never touch an already-detached child.
+    let p = el.parentNode;
+    let nested = false;
+    while (p && p !== content) {
+      if (set.has(p)) {
+        nested = true;
+        break;
+      }
+      p = p.parentNode;
+    }
+    if (nested) continue;
+    try {
+      el.remove();
+      removed++;
+    } catch {
+      /* already detached */
+    }
+  }
+  return removed;
+}
+
+// Doc-toolbar chrome that frameworks render INSIDE the article (so the DOM chrome pass
+// misses it): "Edit this page", "Copy Page as Markdown", feedback widgets, etc.
+// Stripped generically by phrase, as links or standalone lines.
+const TOOLBAR =
+  '(?:edit (?:this )?page|edit (?:on|in) github|edit source|copy (?:page|markdown)(?: as markdown)?|copy as markdown|view source|view (?:page )?source|open in [^\\]\\n]{0,30}|report (?:an? )?(?:issue|problem|bug)|give feedback|send feedback|provide feedback|was this (?:page )?helpful[^\\n]*)';
+
+/** Turndown a prepared content node and run the deterministic Markdown cleanups. */
+function renderMarkdown(content) {
+  const td = buildTurndown();
+  let markdown = '';
+  try {
+    markdown = td.turndown(content.innerHTML || '');
+  } catch {
+    markdown = textOf(content);
+  }
+  markdown = markdown
+    // permalink/anchor links whose visible text is just '#', '¶', or empty
+    .replace(/\[\s*[#¶]?\s*\]\([^)]*\)/g, '')
+    // sponsor/ad links rendered inline ("ads via …", "sponsored by …")
+    .replace(/\[\s*(?:ads?\s+via|sponsored\b|advertisement)[^\]]*\]\([^)]*\)/gi, '')
+    // toolbar actions rendered as links (text may span lines)
+    .replace(new RegExp('\\[\\s*' + TOOLBAR + '\\s*\\]\\([^)]*\\)', 'gi'), '')
+    // toolbar actions rendered as plain standalone lines
+    .replace(new RegExp('^[ \\t]*' + TOOLBAR + '[ \\t]*$', 'gim'), '')
+    // orphan link-close artifacts from broken next/prev nav-card markup: a line
+    // that is only `](url)` with no opening bracket.
+    .replace(/^[ \t]*\]\([^)]*\)[ \t]*$/gm, '')
+    // trailing "next/prev page" footer navigation block (kept conservative to
+    // clearly-navigational lead-ins so real "next steps" content is not cut).
+    .replace(/\n#{1,6}[ \t]*(?:ready for more|continue your learning|keep reading)\b[\s\S]*$/i, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  // Final safety net: remove any inline-SVG/data-URI image noise that leaked as text
+  // (broken data-URI attributes spill their SVG body into the document).
+  return stripSvgNoise(markdown);
+}
+
 /**
  * Convert an HTML document to `{ title, markdown }`.
  * @param {string} html
@@ -184,41 +287,18 @@ export function extractMarkdown(html, { contentSelector, baseUrl, title } = {}) 
   // drop any that slipped through (e.g. namespaced) so their markup never leaks.
   for (const n of content.querySelectorAll('svg')) n.remove();
 
-  const td = buildTurndown();
-  let markdown = '';
-  try {
-    markdown = td.turndown(content.innerHTML || '');
-  } catch {
-    markdown = textOf(content);
+  // #8 — extract PRECISELY (prune link-dense in-content navigation), but CASCADE: keep
+  // the pruned result only when it preserved the page's non-link content; otherwise fall
+  // back to the un-pruned extraction. So navigation boilerplate is trimmed without ever
+  // losing real prose/code. `full` is computed BEFORE pruning (it is the safe fallback).
+  const full = renderMarkdown(content);
+  let markdown = full;
+  if (pruneNavByLinkDensity(content) > 0) {
+    const pruned = renderMarkdown(content);
+    // Accept the trim only if it kept ≥98% of the non-link word content — i.e. it
+    // removed navigation, not content. This is the "precise → permissive" fallback.
+    if (contentWordLen(pruned) >= contentWordLen(full) * 0.98) markdown = pruned;
   }
-  // Doc-toolbar chrome that frameworks render INSIDE the article (so the DOM
-  // chrome pass misses it): "Edit this page", "Copy Page as Markdown", feedback
-  // widgets, etc. Stripped generically by phrase, as links or standalone lines.
-  const TOOLBAR =
-    '(?:edit (?:this )?page|edit (?:on|in) github|edit source|copy (?:page|markdown)(?: as markdown)?|copy as markdown|view source|view (?:page )?source|open in [^\\]\\n]{0,30}|report (?:an? )?(?:issue|problem|bug)|give feedback|send feedback|provide feedback|was this (?:page )?helpful[^\\n]*)';
-
-  markdown = markdown
-    // permalink/anchor links whose visible text is just '#', '¶', or empty
-    .replace(/\[\s*[#¶]?\s*\]\([^)]*\)/g, '')
-    // sponsor/ad links rendered inline ("ads via …", "sponsored by …")
-    .replace(/\[\s*(?:ads?\s+via|sponsored\b|advertisement)[^\]]*\]\([^)]*\)/gi, '')
-    // toolbar actions rendered as links (text may span lines)
-    .replace(new RegExp('\\[\\s*' + TOOLBAR + '\\s*\\]\\([^)]*\\)', 'gi'), '')
-    // toolbar actions rendered as plain standalone lines
-    .replace(new RegExp('^[ \\t]*' + TOOLBAR + '[ \\t]*$', 'gim'), '')
-    // orphan link-close artifacts from broken next/prev nav-card markup: a line
-    // that is only `](url)` with no opening bracket.
-    .replace(/^[ \t]*\]\([^)]*\)[ \t]*$/gm, '')
-    // trailing "next/prev page" footer navigation block (kept conservative to
-    // clearly-navigational lead-ins so real "next steps" content is not cut).
-    .replace(/\n#{1,6}[ \t]*(?:ready for more|continue your learning|keep reading)\b[\s\S]*$/i, '')
-    .replace(/[ \t]{2,}/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-
-  // Final safety net: remove any inline-SVG/data-URI image noise that leaked as
-  // text (broken data-URI attributes spill their SVG body into the document).
-  markdown = stripSvgNoise(markdown);
 
   return { title: docTitle.trim(), markdown };
 }

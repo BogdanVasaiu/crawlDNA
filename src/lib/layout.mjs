@@ -7,7 +7,7 @@
 // aiReshape). So this module's whole job is: concatenate the kept pages, in crawl
 // order, under a small front-matter header, losing nothing.
 
-import { slug } from './url.mjs';
+import { slug, pathOf, hostOf } from './url.mjs';
 
 /** Sanitise a name to a safe `*.md` filename. */
 function sanitizeName(raw) {
@@ -92,4 +92,124 @@ export function assembleScan({ task, pages }) {
       pages: sources,
     },
   ];
+}
+
+// =========================================================================
+// #10 — OPTIONAL per-document packaging
+// =========================================================================
+// The consolidated .md above is convenient for a human; a PROGRAMMATIC consumer (a
+// script, a pipeline, an index — refdna included) usually wants ONE document per page
+// with metadata and a stable id, so pages can be handled individually (Markdown-AST
+// chunking, topic filtering, incremental updates). This is pure RE-PACKAGING of the
+// exact same kept pages — nothing is filtered, transformed or lost: the union of the
+// per-document bodies is identical to what the consolidated file contains. Off by
+// default (opt-in via the `perDocument` option); the crawl itself stays verbatim.
+
+/** A lightweight H1–H3 outline of a page (verbatim heading text), fence-aware — for
+ *  metadata / RAG section paths. Never alters content. */
+export function extractHeadings(markdown) {
+  const out = [];
+  let inFence = false;
+  for (const line of String(markdown || '').split('\n')) {
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const m = line.match(/^(#{1,3})\s+(.+?)\s*#*\s*$/);
+    if (m) out.push({ level: m[1].length, text: m[2].trim() });
+  }
+  return out;
+}
+
+/** A stable, human-readable title for the crawl index, derived from the task. */
+function taskToTitle(task) {
+  return deriveTitle(sanitizeName(taskToName(task)));
+}
+
+/** Minimal self-describing front-matter for a per-document .md file. */
+function docFrontMatter({ url, title, fetchedAt }) {
+  const lines = ['---'];
+  if (url) lines.push(`url: ${JSON.stringify(url)}`);
+  if (title) lines.push(`title: ${JSON.stringify(title)}`);
+  if (fetchedAt) lines.push(`fetchedAt: ${fetchedAt}`);
+  lines.push('---', '');
+  return lines.join('\n');
+}
+
+/**
+ * Package one scan's kept pages as INDIVIDUAL documents (opt-in, #10). Verbatim: each
+ * document's body is the page's own Markdown, untouched. Returns everything needed to
+ * expose the format in memory AND write it to disk:
+ *   - `documents` — one record per page: { id, url, title, fetchedAt, bytes, markdown,
+ *     headings, file } (stable, URL-derived id; content is the verbatim page Markdown).
+ *   - `files`     — the per-document .md files ({ filename, markdown }), each with a
+ *     small front-matter header (url/title/fetchedAt) then the verbatim body.
+ *   - `index`     — an llms.txt-style index of what was crawled ({ filename, markdown }).
+ *   - `jsonl`     — a machine-readable line-per-document manifest ({ filename, content }).
+ *
+ * @param {object} a
+ * @param {string} a.task
+ * @param {Array}  a.pages  result.pages — { url, title, markdown, meta:{ fetchedAt } }
+ */
+export function assemblePerDocument({ task, pages }) {
+  const all = (pages || []).filter((p) => (p.markdown || '').trim());
+  if (all.length === 0) return { documents: [], files: [], index: null, jsonl: null };
+
+  const usedIds = new Set();
+  const stableId = (url, i) => {
+    const p = pathOf(url || '');
+    const source = p && p !== '/' ? p : hostOf(url || '') || `page-${i + 1}`;
+    const base = slug(source) || `page-${i + 1}`;
+    let id = base;
+    let n = 2;
+    while (usedIds.has(id)) id = `${base}-${n++}`; // stable + unique within the scan
+    usedIds.add(id);
+    return id;
+  };
+
+  const documents = [];
+  const files = [];
+  for (let i = 0; i < all.length; i++) {
+    const p = all[i];
+    const id = stableId(p.url || '', i);
+    const md = p.markdown.trim();
+    const title = (p.title || '').trim();
+    const fetchedAt = (p.meta && p.meta.fetchedAt) || '';
+    const filename = `${id}.md`;
+    documents.push({
+      id,
+      url: p.url || '',
+      title,
+      fetchedAt,
+      bytes: Buffer.byteLength(md, 'utf8'),
+      markdown: md, // VERBATIM page body (no header) — clean for programmatic use
+      headings: extractHeadings(md),
+      file: filename,
+    });
+    files.push({ filename, markdown: docFrontMatter({ url: p.url, title, fetchedAt }) + md + '\n' });
+  }
+
+  const indexLines = [
+    `# ${taskToTitle(task)}`,
+    '',
+    `_${documents.length} document(s) · generated ${new Date().toISOString()}_`,
+    '',
+  ];
+  for (const d of documents) {
+    indexLines.push(`- [${d.title || d.id}](documents/${d.file})${d.url ? ` — ${d.url}` : ''}`);
+  }
+  const index = { filename: 'index.md', markdown: indexLines.join('\n') + '\n' };
+
+  const jsonl = {
+    filename: 'documents.jsonl',
+    content:
+      documents
+        .map((d) =>
+          JSON.stringify({ id: d.id, url: d.url, title: d.title, fetchedAt: d.fetchedAt, bytes: d.bytes, file: `documents/${d.file}`, headings: d.headings }),
+        )
+        .join('\n') + '\n',
+  };
+
+  return { documents, files, index, jsonl };
 }

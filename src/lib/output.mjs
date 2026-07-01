@@ -7,12 +7,19 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 /**
- * Write a bundle of grouped Markdown files + manifest.json to `dir`.
+ * Write a bundle of grouped Markdown files + manifest.json to `dir`. When `documents`
+ * is given (the opt-in #10 per-page format), it ALSO writes one .md per page under a
+ * `documents/` subfolder plus a root `index.md` and `documents.jsonl` — pure repackaging
+ * of the same content, so a programmatic consumer can load pages individually.
+ *
  * @param {string} dir
- * @param {{ files: Array<{ filename: string, markdown: string }>, manifest: object }} bundle
- * @returns {Promise<{ dir: string, manifestPath: string, files: number }>}
+ * @param {object} bundle
+ * @param {Array<{ filename: string, markdown: string }>} [bundle.files]
+ * @param {object} bundle.manifest
+ * @param {{ files?: Array<{filename,markdown}>, index?: {filename,markdown}, jsonl?: {filename,content} }} [bundle.documents]
+ * @returns {Promise<{ dir: string, manifestPath: string, files: number, documents: number }>}
  */
-export async function writeBundle(dir, { files = [], manifest }) {
+export async function writeBundle(dir, { files = [], manifest, documents = null }) {
   const root = path.resolve(dir);
   await mkdir(root, { recursive: true });
 
@@ -22,8 +29,26 @@ export async function writeBundle(dir, { files = [], manifest }) {
     await writeFile(abs, f.markdown, 'utf8');
   }
 
+  let docCount = 0;
+  if (documents) {
+    if (documents.files && documents.files.length) {
+      const docDir = path.join(root, 'documents');
+      await mkdir(docDir, { recursive: true });
+      for (const f of documents.files) {
+        await writeFile(path.join(docDir, path.basename(f.filename)), f.markdown, 'utf8');
+        docCount++;
+      }
+    }
+    if (documents.index) {
+      await writeFile(path.join(root, path.basename(documents.index.filename)), documents.index.markdown, 'utf8');
+    }
+    if (documents.jsonl) {
+      await writeFile(path.join(root, path.basename(documents.jsonl.filename)), documents.jsonl.content, 'utf8');
+    }
+  }
+
   const manifestPath = path.join(root, 'manifest.json');
   await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
 
-  return { dir: root, manifestPath, files: files.length };
+  return { dir: root, manifestPath, files: files.length, documents: docCount };
 }

@@ -24,7 +24,9 @@
   ],
   "scripts": {
     "start": "node bin/cli.mjs",
-    "serve": "node bin/cli.mjs serve"
+    "serve": "node bin/cli.mjs serve",
+    "test": "node --test \"test/*.test.mjs\"",
+    "eval": "node scripts/eval.mjs"
   },
   "engines": {
     "node": ">=20"

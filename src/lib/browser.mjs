@@ -83,20 +83,102 @@ const SNIFFER = `(() => {
   } catch (e) {}
 })();`;
 
-/** A fresh page in its own context (isolated cookies/state) with the sniffer. */
-export async function newPage() {
-  const browser = await getBrowser();
-  const context = await browser.newContext({
-    userAgent: 'sagecrawl/0.1 (+https://github.com/sagecrawl)',
-    viewport: { width: 1280, height: 900 },
-  });
-  await context.addInitScript(SNIFFER);
-  const page = await context.newPage();
-  return { page, context };
+const CONTEXT_OPTS = {
+  userAgent: 'sagecrawl/0.1 (+https://github.com/sagecrawl)',
+  viewport: { width: 1280, height: 900 },
+};
+
+// --- Browser-context pool (asset-cache reuse across pages) ------------------
+// A brand-new context per page throws away the browser's HTTP cache, so the site's
+// shared CSS/JS/fonts are re-downloaded on EVERY page — pure waste on a docs site with
+// hundreds of same-styled pages. Instead we keep a small pool of contexts and REUSE
+// them: within a context the HTTP cache is shared, so a page's static assets are fetched
+// once and served from cache thereafter. Parallelism is preserved — the pool holds up to
+// `_maxIdle` idle contexts (set to the crawl's concurrency), so N workers each keep their
+// own context alive between pages.
+//
+// COMPLETENESS IS NOT AT RISK (the project's first rule). Reuse only shares the ASSET
+// cache; it does not change what a page renders for us, because the engine (1) opens a
+// FRESH page and navigates fresh for every URL, and (2) exhaustively clicks EVERY reveal
+// control regardless of any remembered client state — so accumulated cookies/localStorage
+// can't hide content from extraction (a "remembered" tab is still clicked; a first-visit
+// tour is chrome, not content). Contexts are recycled after `_maxUses` pages as plain
+// hygiene against a pathological page corrupting one. Consent is still dismissed per page
+// by the reveal engine, so a carried-over consent cookie only ever helps.
+const _idleContexts = [];
+let _maxIdle = 8; // set from concurrency by configureContextPool
+const _maxUses = 100; // recycle a context after this many pages
+
+/** Size the idle pool to the crawl's concurrency so each worker keeps its own context. */
+export function configureContextPool(concurrency) {
+  _maxIdle = Math.max(1, Number(concurrency) || 1);
 }
 
-/** Close the shared browser, if any. Safe to call multiple times. */
+async function makeContext() {
+  const browser = await getBrowser();
+  const context = await browser.newContext(CONTEXT_OPTS);
+  await context.addInitScript(SNIFFER); // once per context, not per page
+  context.__uses = 0;
+  return context;
+}
+
+/** Return a context to the pool for reuse, or close it once it's served enough pages
+ *  (or the idle pool is already full). Never throws. */
+async function releaseContext(context) {
+  if (!context) return;
+  context.__uses = (context.__uses || 0) + 1;
+  if (context.__uses >= _maxUses || _idleContexts.length >= _maxIdle) {
+    await context.close().catch(() => {});
+    return;
+  }
+  _idleContexts.push(context);
+}
+
+/**
+ * A fresh page for one URL, drawn from a REUSED browser context (shared asset cache),
+ * plus a `release()` to return the context to the pool when the page is done.
+ * The sniffer is already installed on the context. Callers MUST call `release()` (not
+ * `context.close()`) to get the caching benefit — closing the context still works but
+ * forfeits reuse.
+ *
+ * @returns {Promise<{ page, context, release: () => Promise<void> }>}
+ */
+export async function newPage() {
+  // Reuse an idle context if one is available; a stale/broken one is dropped and a
+  // fresh context made, so a bad context can never wedge the crawl.
+  let context = _idleContexts.pop();
+  let page;
+  if (context) {
+    try {
+      page = await context.newPage();
+    } catch {
+      await context.close().catch(() => {});
+      context = null;
+    }
+  }
+  if (!context) {
+    context = await makeContext();
+    page = await context.newPage();
+  }
+
+  let released = false;
+  const release = async () => {
+    if (released) return; // idempotent: safe to call from both catch and finally
+    released = true;
+    try {
+      await page.close();
+    } catch {
+      /* ignore */
+    }
+    await releaseContext(context);
+  };
+  return { page, context, release };
+}
+
+/** Close the shared browser, if any, and drop the pooled contexts. Safe to call
+ *  multiple times (e.g. once per run — the browser relaunches lazily next run). */
 export async function closeBrowser() {
+  _idleContexts.length = 0; // the contexts are closed with the browser below
   if (_browser) {
     try {
       await _browser.close();

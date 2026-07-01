@@ -11,12 +11,13 @@
 import { createHash } from 'node:crypto';
 import { runDocsProfile } from './profiles/docs.mjs';
 import { crawlPageWithEngine } from './engine/crawl-page.mjs';
-import { assembleScan } from './lib/layout.mjs';
+import { assembleScan, assemblePerDocument } from './lib/layout.mjs';
 import { saveRun, scanIdFor } from './lib/runs.mjs';
-import { closeBrowser } from './lib/browser.mjs';
+import { closeBrowser, configureContextPool } from './lib/browser.mjs';
 import { normalizeUrl, inScope, pathOf, originOf, hostOf } from './lib/url.mjs';
 import { isDocsTask } from './lib/task.mjs';
 import { resolveLlm, checkModel, abortPendingLlm } from './lib/llm.mjs';
+import { simhash, hamming } from './lib/simhash.mjs';
 
 export const DEFAULT_OPTIONS = {
   task: 'Extract the complete documentation.',
@@ -48,6 +49,15 @@ export const DEFAULT_OPTIONS = {
   // The CLI and Web UI are apps, so they pass `save: true` (cache rooted at cwd).
   save: false,
   cacheDir: undefined, // where to save when saving is on (default: <cwd>/.sagecrawl/runs)
+  perDocument: false, // ALSO package one identifiable .md per page (+ index.md + JSONL)
+  // for programmatic consumers, alongside the consolidated .md. Off by default (the
+  // consolidated file is friendlier for a human). Pure repackaging — content stays
+  // verbatim, nothing is filtered or transformed. See lib/layout.mjs assemblePerDocument.
+  nearDupHamming: 0, // NEAR-DUP DEDUP (0 = off, exact-only — the safe default). When > 0,
+  // pages whose 64-bit SimHash is within this Hamming distance of an already-kept page are
+  // collapsed as near-duplicates (template-only differences). OPT-IN because collapsing
+  // "almost identical" pages can drop a page whose unique bit is small — against "never
+  // lose content"; the default drops NOTHING beyond exact duplicates. 3 ≈ Manku/Google.
   onEvent: undefined,
 };
 
@@ -116,6 +126,11 @@ export function crawlDocs(targets, options = {}) {
   opts.maxPages = Math.max(0, Number(opts.maxPages) || 0);
   opts.maxActions = Math.max(1, Number(opts.maxActions) || 1);
   opts.minRelevance = Math.min(1, Math.max(0, Number(opts.minRelevance) || 0));
+  opts.nearDupHamming = Math.min(64, Math.max(0, Math.floor(Number(opts.nearDupHamming) || 0)));
+  // Size the browser-context pool to the concurrency so each worker keeps (and reuses)
+  // its own context — the site's shared CSS/JS is then cached across pages instead of
+  // re-downloaded per page. See src/lib/browser.mjs.
+  configureContextPool(opts.concurrency);
   // Resolve the model provider once; the engine reads ctx.options.llm and stays
   // provider-agnostic (Ollama or any OpenAI-compatible API).
   opts.llm = resolveLlm(opts);
@@ -135,7 +150,10 @@ export function crawlDocs(targets, options = {}) {
   const emptyCounts = () => ({ 'docs:llms-full': 0, 'docs:sitemap': 0, 'docs:framework': 0, agent: 0 });
   // AI usage meter — input/output token totals so a run's API cost can be
   // approximated after the fact (input and output are billed differently).
-  const emptyTokens = () => ({ calls: 0, inputTokens: 0, outputTokens: 0 });
+  // `byKind` splits the same totals by WHICH judgment spent them (reveal / scope /
+  // links / nav-plan / …), so the eval harness (src/eval) can show WHERE the tokens
+  // go, not just the grand total. Same shape as the top-level counters, per kind.
+  const emptyTokens = () => ({ calls: 0, inputTokens: 0, outputTokens: 0, byKind: {} });
   const scans = list.map((t, i) => ({
     scanId: scanIdFor(t.url, i),
     index: i,
@@ -144,6 +162,7 @@ export function crawlDocs(targets, options = {}) {
     title: hostOf(t.url) || t.url,
     pages: [],
     files: [],
+    documents: [], // per-page format, populated only when opts.perDocument is on (#10)
     stats: { pages: 0, durationMs: 0, strategyCounts: emptyCounts(), tokens: emptyTokens() },
     warnings: [],
     _hashes: new Set(), // de-dupe pages with identical content, PER scan
@@ -230,6 +249,19 @@ export function crawlDocs(targets, options = {}) {
       const hash = createHash('sha1').update(sig).digest('hex');
       if (scan._hashes.has(hash)) return;
       scan._hashes.add(hash);
+      // OPT-IN near-duplicate collapse (nearDupHamming > 0): drop a page whose SimHash is
+      // within the Hamming threshold of one already kept (same content, template-only
+      // difference). Default 0 = off, so NOTHING beyond exact dupes is ever dropped — this
+      // can only lose content when the user explicitly asks for it. Computed over the same
+      // link/URL-stripped signature, so differing nav/URLs don't hide a near-dup.
+      if (opts.nearDupHamming > 0) {
+        const sh = simhash(sig);
+        if (!scan._simhashes) scan._simhashes = [];
+        for (const prev of scan._simhashes) {
+          if (hamming(sh, prev) <= opts.nearDupHamming) return; // near-dup of a kept page
+        }
+        scan._simhashes.push(sh);
+      }
       scan.pages.push(page);
       const s = (page.meta && page.meta.strategy) || 'agent';
       scan.stats.strategyCounts[s] = (scan.stats.strategyCounts[s] || 0) + 1;
@@ -250,12 +282,19 @@ export function crawlDocs(targets, options = {}) {
 
   // Sink every model call's token usage into the run total and the active scan, so
   // the saved run records how much AI it cost (the engine/profiles stay unaware).
-  opts.llm.__onUsage = ({ inputTokens = 0, outputTokens = 0 } = {}) => {
+  // `kind` (reveal/scope/links/nav-plan/…) is accumulated into `byKind` alongside the
+  // grand totals, so the cost can be attributed per call type without any extra plumbing.
+  opts.llm.__onUsage = ({ kind = 'other', inputTokens = 0, outputTokens = 0 } = {}) => {
     const bump = (t) => {
       if (!t) return;
       t.calls += 1;
       t.inputTokens += inputTokens;
       t.outputTokens += outputTokens;
+      if (!t.byKind) t.byKind = {};
+      const k = t.byKind[kind] || (t.byKind[kind] = { calls: 0, inputTokens: 0, outputTokens: 0 });
+      k.calls += 1;
+      k.inputTokens += inputTokens;
+      k.outputTokens += outputTokens;
     };
     bump(result.stats.tokens);
     if (ctx.currentScan) bump(ctx.currentScan.stats.tokens);
@@ -310,6 +349,14 @@ export function crawlDocs(targets, options = {}) {
             // filtering or reshaping happens here — that is Phase 2 ("reshape", the
             // chat over these saved files). The crawl stays faithful by construction.
             scan.files = assembleScan({ task: scan.task, pages: scan.pages });
+            // #10 (opt-in): ALSO package one identifiable document per page (+ index +
+            // JSONL). Pure repackaging of the SAME pages — the consolidated .md above is
+            // unchanged and no content is lost. `_docBundle` carries the files to save.
+            if (opts.perDocument) {
+              const doc = assemblePerDocument({ task: scan.task, pages: scan.pages });
+              scan.documents = doc.documents;
+              scan._docBundle = doc;
+            }
           }
         } catch (err) {
           scan.files = [];

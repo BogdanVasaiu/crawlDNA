@@ -1,0 +1,28 @@
+{
+  "_comment": "EXAMPLE / TEMPLATE — a NON-doc task (a restaurant menu). #12 asks for at least one doc and one non-doc spec. Repoint url at a real menu and verify every expect[] value before trusting the score. See ../README.md.",
+  "name": "pizzeria-menu",
+  "url": "https://example.com/menu",
+  "task": "Extract the full food menu with dishes and prices",
+  "expect": {
+    "_revealNote": "Menu categories are often behind tabs/accordions (Pizzas / Pasta / Drinks) — list an item that is hidden until you open its category.",
+    "revealContent": [
+      "Margherita"
+    ],
+    "_includeNote": "Dishes/prices the task asked for — these must survive.",
+    "mustInclude": [
+      "Margherita",
+      "Marinara"
+    ],
+    "_excludeNote": "Off-task chrome a menu task should NOT keep.",
+    "mustExclude": [
+      "Subscribe to our newsletter",
+      "Cookie settings",
+      "Book a table"
+    ],
+    "sitemap": false
+  },
+  "options": {
+    "maxPages": 3,
+    "minRelevance": 0
+  }
+}
