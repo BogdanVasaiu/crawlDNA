@@ -108,7 +108,7 @@ la modifica e confrontare numero di pagine tenute, byte totali, e i blocchi rive
 |---|--------|---------|--------|-------|
 | 13 | Persistenza incrementale + resume del crawl | affidabilità (crash ≠ perdita totale) | Medio-Alto | ✅ fatto (2026-07-02) |
 | 14 | Politeness opt-in (delay per host + robots.txt) | affidabilità / reputazione | Basso-Medio | ☐ da fare |
-| 15 | Render-wait: response-quiet al posto di `networkidle` | tempo (−secondi fissi per pagina) | Basso-Medio | ☐ da fare |
+| 15 | Render-wait: response-quiet al posto di `networkidle` | tempo (−secondi fissi per pagina) | Basso-Medio | ✅ fatto (2026-07-02, da verificare dal vivo) |
 | 16 | Budget/ranking per le route minate dai JS | consumi (token gate `links`) | Basso | ☐ da fare |
 | 17 | CI GitHub Actions (suite offline a ogni push) | qualità continua | Basso | ✅ fatto (2026-07-02) |
 | 18 | Packaging npm (playwright peer-optional, metadata repo) | fruibilità libreria | Basso | ☐ da fare |
@@ -860,7 +860,41 @@ come pagine; con entrambe off il comportamento è identico a oggi.
 ---
 
 ## #15 — Render-wait: response-quiet al posto di `networkidle`
-**Effetto:** tempo (−secondi FISSI per pagina sui siti con analytics) · **Sforzo:** Basso-Medio · **Stato:** ☐
+**Effetto:** tempo (−secondi FISSI per pagina sui siti con analytics) · **Sforzo:** Basso-Medio · **Stato:** ✅ FATTO (2026-07-02, ⏳ numeri dal vivo con #12)
+
+> **Implementato.** `settle()` estratto in [src/lib/settle.mjs](src/lib/settle.mjs)
+> (helper condiviso, puro JS sull'interfaccia page — testabile senza Playwright) e
+> usato in TUTTI e tre i punti dove `networkidle` tassava le pagine, non solo nel
+> render iniziale:
+> - **Render iniziale** ([crawl-page.mjs](src/engine/crawl-page.mjs)): prima il
+>   paint-check SPA (com'era), poi `settle(maxMs 8000)` al posto di
+>   `networkidle(8s) + 400ms flat`. Stesso tetto di prima → il caso peggiore non
+>   regredisce MAI; l'uscita quiet+testo-stabile di settle assorbe anche il 400ms
+>   fisso. Il punto chiave: settle conta gli EVENTI response, non le connessioni
+>   aperte — un sito con websocket/SSE/long-poll aperto (dove l'idle non arriva
+>   MAI e si pagavano gli 8s pieni a pagina) esce dopo una grace window (~0.8s).
+> - **`restoreBase`** ([reveal.mjs](src/engine/reveal.mjs)): il reload post-navigazione
+>   pagava `networkidle(5s) + 300ms` a ogni ripristino → `settle(maxMs 5000)`.
+> - **`loadHtml`** ([fetcher.mjs](src/lib/fetcher.mjs)) — il caso peggiore trovato
+>   leggendo il codice: `goto(waitUntil:'networkidle', timeout:45000)` sulla via
+>   di escalation browser bruciava fino a **45 secondi** su un sito con socket
+>   aperto → `goto('domcontentloaded') + settle(maxMs 8000)`.
+>
+> _Perché non perde contenuto (regola #1):_ ogni garanzia del wait vecchio è
+> conservata o rafforzata — contenuto dipinto (paint-check invariato), rete quieta
+> (grace 650ms sugli eventi ≈ i 500ms di idle, ma immune ai socket), stabilità del
+> testo DOPO il paint (più forte del 400ms cieco), e il tetto massimo identico.
+> Su una pagina patologica con traffico continuo sotto-grace, settle arriva al cap
+> = comportamento odierno. È lo STESSO segnale già validato dal vivo sul post-click
+> (calendario ACI: cascata lazy da 1s catturata correttamente).
+>
+> **Verificato** ([test/settle.test.mjs](test/settle.test.mjs), 5 test, 109 totali):
+> pagina quieta/socket-aperto esce alla grace (non al cap); heartbeat sotto-grace
+> bounded dal cap (mai appeso); cascata di load attesa fino in fondo ma ben sotto
+> il cap; testo che cresce ritarda l'uscita finché non si stabilizza; evaluate che
+> muore (navigazione sotto i piedi) esce pulito e stacca il listener.
+> ⏳ **Dal vivo:** misurare il tempo medio/pagina prima/dopo su un sito con
+> analytics (harness #12) e confermare Markdown identico sulle pagine di riferimento.
 
 **Problema oggi.** `crawlPageWithEngine` aspetta `networkidle` con timeout 8s
 ([src/engine/crawl-page.mjs](src/engine/crawl-page.mjs)): sui siti con

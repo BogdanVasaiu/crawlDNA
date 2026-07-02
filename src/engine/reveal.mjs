@@ -25,6 +25,7 @@
 
 import { perceive } from './perceive.mjs';
 import { clickRevealer, scrollStep } from './actions.mjs';
+import { settle } from '../lib/settle.mjs';
 import { extractMarkdown, BlockAccumulator } from '../extract.mjs';
 import { aiSelectRevealers, aiPlanNavigation } from './decide.mjs';
 
@@ -175,8 +176,9 @@ export async function revealAll(page, ctx, url, task) {
   const restoreBase = async () => {
     try {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
-      await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
-      await page.waitForTimeout(300);
+      // Response-quiet instead of networkidle (#15): a held-open socket kept the
+      // idle signal from EVER firing, taxing every restore its full 5s timeout.
+      await settle(page, { maxMs: 5000 });
     } catch {
       return;
     }

@@ -12,6 +12,7 @@ import { aiScopeContent, aiSelectLinks } from './decide.mjs';
 import { isDocsTask } from '../lib/task.mjs';
 import { normalizeUrl, inScope, resolveUrl } from '../lib/url.mjs';
 import { taskTerms, scoreLink } from '../lib/relevance.mjs';
+import { settle } from '../lib/settle.mjs';
 
 const now = () => new Date().toISOString();
 const bytesOf = (s) => Buffer.byteLength(s || '', 'utf8');
@@ -162,7 +163,6 @@ export async function crawlPageWithEngine(target, ctx) {
     } catch {
       navFailed = true; // fall through to whatever rendered
     }
-    await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
     // Give a client-rendered app a chance to paint real content before we look.
     await page
       .waitForFunction(
@@ -173,7 +173,15 @@ export async function crawlPageWithEngine(target, ctx) {
         { timeout: 6000 },
       )
       .catch(() => {});
-    await page.waitForTimeout(400);
+    // Then wait for the load to actually FINISH via the response-quiet signal
+    // (#15): network quiet for a grace window AND the text no longer changing.
+    // `networkidle` sat here before and was a FIXED 8s tax on any site holding a
+    // connection open (analytics, websocket, long-poll) — the idle never fires.
+    // settle() counts response EVENTS, not open connections, so those sites exit
+    // after one grace window; a real late cascade is still waited out. The same
+    // 8s bound keeps the worst case from ever regressing, and settle's final
+    // quiet+stable exit subsumes the flat 400ms that used to follow.
+    await settle(page, { maxMs: 8000 });
     if (status >= 400) {
       ctx.emit({
         type: 'warn',

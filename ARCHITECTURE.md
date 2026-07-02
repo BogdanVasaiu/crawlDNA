@@ -163,9 +163,12 @@ This is the per-page heart of the crawler, in [`src/engine/`](src/engine/).
 
 ### 6.1 Render ([`crawl-page.mjs`](src/engine/crawl-page.mjs))
 
-Opens a fresh Playwright page, navigates (`domcontentloaded`), waits for network
-idle and for a client-rendered app to actually paint real content, then hands off
-to the reveal pass. Popups are recorded and closed. If a browser can't launch it
+Opens a fresh Playwright page, navigates (`domcontentloaded`), waits for a
+client-rendered app to actually paint real content and for the load to finish
+via the **response-quiet** signal (`lib/settle.mjs`: network quiet for a grace
+window + text stable, bounded — counts response *events*, not open connections,
+so a held websocket/long-poll never taxes the page like `networkidle` did), then
+hands off to the reveal pass. Popups are recorded and closed. If a browser can't launch it
 degrades to a **static fallback** (plain fetch + extraction; emits a warning that
 completeness isn't guaranteed).
 

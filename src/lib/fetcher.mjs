@@ -2,6 +2,7 @@
 // a page looks like a JS-rendered shell or the caller forces it.
 
 import { isBrowserAvailable, newPage } from './browser.mjs';
+import { settle } from './settle.mjs';
 
 const DEFAULT_HEADERS = {
   'user-agent': 'sagecrawl/0.1 (+https://github.com/sagecrawl)',
@@ -75,8 +76,12 @@ export async function loadHtml(url, { browserMode = 'auto', ctx } = {}) {
       const { page } = p;
       let status = 200;
       try {
-        const resp = await page.goto(url, { waitUntil: 'networkidle', timeout: 45000 });
+        // domcontentloaded + response-quiet (#15), NOT waitUntil:'networkidle':
+        // a site holding a websocket/long-poll open never reaches idle, which
+        // made this goto burn its FULL 45s timeout before falling through.
+        const resp = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
         status = resp ? resp.status() : 200;
+        await settle(page, { maxMs: 8000 });
       } catch {
         // fall back to whatever rendered before the timeout
       }
