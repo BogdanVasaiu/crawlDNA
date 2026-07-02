@@ -1,5 +1,7 @@
 # sagecrawl
 
+[![tests](https://github.com/BogdanVasaiu/sagecrawl/actions/workflows/test.yml/badge.svg)](https://github.com/BogdanVasaiu/sagecrawl/actions/workflows/test.yml)
+
 A **general, task-driven web crawler**. Give it one or more links, each with a
 natural-language **task** describing what to extract. It crawls each site to
 fulfil its task and outputs clean **Markdown**.

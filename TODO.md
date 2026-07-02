@@ -110,7 +110,7 @@ la modifica e confrontare numero di pagine tenute, byte totali, e i blocchi rive
 | 14 | Politeness opt-in (delay per host + robots.txt) | affidabilità / reputazione | Basso-Medio | ☐ da fare |
 | 15 | Render-wait: response-quiet al posto di `networkidle` | tempo (−secondi fissi per pagina) | Basso-Medio | ☐ da fare |
 | 16 | Budget/ranking per le route minate dai JS | consumi (token gate `links`) | Basso | ☐ da fare |
-| 17 | CI GitHub Actions (suite offline a ogni push) | qualità continua | Basso | ☐ da fare |
+| 17 | CI GitHub Actions (suite offline a ogni push) | qualità continua | Basso | ✅ fatto (2026-07-02) |
 | 18 | Packaging npm (playwright peer-optional, metadata repo) | fruibilità libreria | Basso | ☐ da fare |
 
 **Da fare per primi (qualità del crawl):** #1, #2, #3. *(fatti)*
@@ -863,7 +863,21 @@ sensibilmente; il set di pagine tenute resta identico (harness #12).
 ---
 
 ## #17 — CI GitHub Actions (suite offline a ogni push)
-**Effetto:** qualità continua · **Sforzo:** Basso · **Stato:** ☐
+**Effetto:** qualità continua · **Sforzo:** Basso · **Stato:** ✅ FATTO (2026-07-02)
+
+> **Implementato.** Nuovo [.github/workflows/test.yml](.github/workflows/test.yml):
+> trigger su push a `main` + ogni PR (niente doppioni push/PR sulla stessa branch),
+> matrice **Node 20 + 22** (`fail-fast: false` — un fallimento su una versione non
+> nasconde l'esito dell'altra), `npm ci && npm test` con cache npm,
+> `permissions: contents: read` (least privilege) e `concurrency` che cancella i run
+> superati dello stesso ref. `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` come cintura di
+> sicurezza: la suite è offline by design (verificato: nessun test importa playwright;
+> 97/97 verdi in ~1.7s) e Chromium non va MAI scaricato in CI. Badge aggiunto in cima
+> al README. Lockfile verificato in sync con package.json (`npm ci` non fallirà).
+> ⚠️ **Slug provvisorio:** il repo non ha ancora un remote GitHub → badge e URL usano
+> `BogdanVasaiu/sagecrawl`; quando si configura il remote (vedi #18, repository/
+> homepage in package.json) va allineato se lo slug reale è diverso. Il workflow in
+> sé è slug-agnostico (si attiva da solo al primo push).
 
 **Problema oggi.** La suite (97 test, zero rete/browser/modello) gira solo a mano: una
 regressione può entrare inosservata.
