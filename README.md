@@ -1,6 +1,7 @@
 # sagecrawl
 
 [![tests](https://github.com/BogdanVasaiu/sagecrawl/actions/workflows/test.yml/badge.svg)](https://github.com/BogdanVasaiu/sagecrawl/actions/workflows/test.yml)
+[![license: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
 A **general, task-driven web crawler**. Give it one or more links, each with a
 natural-language **task** describing what to extract. It crawls each site to
@@ -419,4 +420,7 @@ Run it before and after any engine change; a live check on a reference site
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+[AGPL-3.0-only](LICENSE). Free to use, self-host and modify; if you offer a
+modified version of sagecrawl to others as a network service, you must release
+your service's source under the same license. Internal/personal use carries no
+such obligation. For a commercial license outside these terms, open an issue.
