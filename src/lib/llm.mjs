@@ -20,6 +20,11 @@ import ollama, { Ollama } from 'ollama';
 const PROVIDERS = new Set(['ollama', 'openai']);
 const DEFAULT_OLLAMA_HOST = 'http://127.0.0.1:11434';
 const REQUEST_TIMEOUT_MS = 120000;
+// Reshape turns rework WHOLE documents (long outputs, slow on a local model) — the
+// 120s leash killed a legitimate "redo the original, tidied" turn live. They get a
+// longer, still-bounded budget; the crawl's small judgment calls keep the tight one.
+const RESHAPE_TIMEOUT_MS = 300000;
+const timeoutFor = (kind) => (kind === 'reshape' ? RESHAPE_TIMEOUT_MS : REQUEST_TIMEOUT_MS);
 
 // --- LLM call throttle (provider-aware) ------------------------------------
 // A LOCAL model (Ollama) is a single process that answers ~one prompt at a time,
@@ -167,7 +172,7 @@ function ollamaClient(host) {
   return c;
 }
 
-async function ollamaChat(llm, system, user, schema) {
+async function ollamaChat(llm, system, user, schema, timeoutMs = REQUEST_TIMEOUT_MS) {
   const req = {
     model: llm.model,
     messages: [
@@ -184,7 +189,7 @@ async function ollamaChat(llm, system, user, schema) {
   if (schema) req.format = schema;
   const res = await withTimeout(
     ollamaClient(llm.baseUrl).chat(req),
-    REQUEST_TIMEOUT_MS,
+    timeoutMs,
     'Ollama request',
   );
   const content = res?.message?.content || '';
@@ -193,12 +198,44 @@ async function ollamaChat(llm, system, user, schema) {
   const usage = {
     inputTokens: res?.prompt_eval_count ?? estimateTokens(system + user),
     outputTokens: res?.eval_count ?? estimateTokens(content),
+    cachedInputTokens: 0, // Ollama reuses its KV cache internally but doesn't report it
   };
   return { content, usage };
 }
 
 // --- OpenAI-compatible backend (raw fetch, zero new deps) -------------------
-async function openaiChat(llm, system, user, schema) {
+
+/**
+ * Build the chat messages for an OpenAI-compatible request (#4 prompt caching).
+ *
+ * The judgment system prompts are deliberately BYTE-IDENTICAL across every call of
+ * their type (per-call data lives in the user message), so providers with automatic
+ * prefix caching (OpenAI, DeepSeek, vLLM, …) reuse them without being asked —
+ * repeat input tokens become ~10× cheaper/faster on a crawl's thousands of calls.
+ *
+ * OpenRouter is the one place an EXPLICIT marker helps: Anthropic models behind it
+ * cache only blocks tagged `cache_control`, and OpenRouter documents this content-
+ * parts form for all models (it strips the field where unsupported). Every other
+ * endpoint gets the plain-string system message, so nothing changes for them.
+ * Exported for tests.
+ */
+export function buildOpenAiMessages(llm, system, user) {
+  let sys = system;
+  try {
+    const host = new URL(llm.baseUrl).hostname;
+    if (host === 'openrouter.ai' || host.endsWith('.openrouter.ai')) {
+      sys = [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }];
+    }
+  } catch {
+    /* unparsable base URL — keep the plain string; the request will surface the error */
+  }
+  return [
+    { role: 'system', content: sys },
+    { role: 'user', content: user },
+  ];
+}
+
+async function openaiChat(llm, system, user, schema, timeoutMs = REQUEST_TIMEOUT_MS) {
   if (!llm.baseUrl) throw new Error('no API base URL set');
   const headers = {
     'content-type': 'application/json',
@@ -206,10 +243,7 @@ async function openaiChat(llm, system, user, schema) {
   };
   const base = {
     model: llm.model,
-    messages: [
-      { role: 'system', content: system },
-      { role: 'user', content: user },
-    ],
+    messages: buildOpenAiMessages(llm, system, user),
     temperature: 0,
     stream: false,
   };
@@ -223,7 +257,7 @@ async function openaiChat(llm, system, user, schema) {
       method: 'POST',
       headers,
       body: JSON.stringify(useFormat ? { ...base, response_format: { type: 'json_object' } } : base),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
   let r = await send(!!schema);
@@ -241,6 +275,11 @@ async function openaiChat(llm, system, user, schema) {
   const usage = {
     inputTokens: u.prompt_tokens ?? estimateTokens(system + user),
     outputTokens: u.completion_tokens ?? estimateTokens(content),
+    // #4: how much of the input was served from the provider's prompt cache —
+    // OpenAI-style (prompt_tokens_details.cached_tokens) or DeepSeek-style
+    // (prompt_cache_hit_tokens). Metered so a run can SHOW the cached share growing
+    // (those tokens are ~10× cheaper); 0 when the provider doesn't report it.
+    cachedInputTokens: Number(u.prompt_tokens_details?.cached_tokens ?? u.prompt_cache_hit_tokens ?? 0) || 0,
   };
   return { content, usage };
 }
@@ -263,16 +302,23 @@ export async function chat(llm, system, user, schema = null, kind = '') {
   const provider = llm.provider === 'openai' ? 'openai' : 'ollama';
   // Meter concurrent calls per provider (tight for local, generous for remote).
   return limiterFor(provider).run(async () => {
+    const timeoutMs = timeoutFor(kind);
     const { content, usage } = provider === 'openai'
-      ? await openaiChat(llm, system, user, schema)
-      : await ollamaChat(llm, system, user, schema);
+      ? await openaiChat(llm, system, user, schema, timeoutMs)
+      : await ollamaChat(llm, system, user, schema, timeoutMs);
     // Report token usage to an optional sink on the descriptor (set by the crawl)
     // so cost can be approximated. The `kind` lets the sink break the total down by
     // call type (which judgment actually spends the tokens). Metering must never
     // break the actual call.
     if (typeof llm.__onUsage === 'function') {
       try {
-        llm.__onUsage({ provider, kind: kind || 'other', inputTokens: usage.inputTokens || 0, outputTokens: usage.outputTokens || 0 });
+        llm.__onUsage({
+          provider,
+          kind: kind || 'other',
+          inputTokens: usage.inputTokens || 0,
+          outputTokens: usage.outputTokens || 0,
+          cachedInputTokens: usage.cachedInputTokens || 0,
+        });
       } catch {
         /* ignore */
       }

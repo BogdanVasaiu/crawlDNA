@@ -170,7 +170,14 @@ export function tokenBreakdown(tokens = {}) {
   const rows = Object.entries(byKind).map(([kind, k]) => {
     const input = Number(k.inputTokens || 0);
     const output = Number(k.outputTokens || 0);
-    return { kind, calls: Number(k.calls || 0), inputTokens: input, outputTokens: output, total: input + output };
+    return {
+      kind,
+      calls: Number(k.calls || 0),
+      inputTokens: input,
+      outputTokens: output,
+      cachedInputTokens: Number(k.cachedInputTokens || 0),
+      total: input + output,
+    };
   });
   const grand = rows.reduce((n, r) => n + r.total, 0);
   for (const r of rows) r.share = grand ? round(r.total / grand) : 0;
@@ -178,11 +185,17 @@ export function tokenBreakdown(tokens = {}) {
 
   const totalInput = Number(tokens.inputTokens || 0);
   const totalOutput = Number(tokens.outputTokens || 0);
+  const totalCached = Number(tokens.cachedInputTokens || 0);
   return {
     total: {
       calls: Number(tokens.calls || 0),
       inputTokens: totalInput,
       outputTokens: totalOutput,
+      // #4: the slice of input served from the provider's prompt cache (~10× cheaper);
+      // cachedShare is its fraction of ALL input — the number that should GROW after
+      // the first calls of each kind when prefix caching is working.
+      cachedInputTokens: totalCached,
+      cachedShare: totalInput ? round(totalCached / totalInput) : 0,
       total: totalInput + totalOutput,
     },
     rows,

@@ -130,12 +130,18 @@ export interface OutputFile {
 
 /** AI token usage counters. `byKind` splits the same totals by call type
  *  (`"reveal"`, `"scope"`, `"links"`, `"nav-plan"`, `"health"`, …) so cost can be
- *  attributed to the judgment that spent it. */
+ *  attributed to the judgment that spent it. `cachedInputTokens` is the slice of
+ *  `inputTokens` a remote provider served from its prompt cache (~10× cheaper);
+ *  `0` for providers that don't report it (e.g. local Ollama). */
 export interface TokenUsage {
   calls: number;
   inputTokens: number;
   outputTokens: number;
-  byKind: Record<string, { calls: number; inputTokens: number; outputTokens: number }>;
+  cachedInputTokens: number;
+  byKind: Record<
+    string,
+    { calls: number; inputTokens: number; outputTokens: number; cachedInputTokens: number }
+  >;
 }
 
 export interface Stats {

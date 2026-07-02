@@ -120,7 +120,10 @@ export function formatReport(report) {
   // (c) tokens per call type
   L.push('');
   const tk = report.tokens;
-  L.push(`(c) tokens: ${tk.total.total.toLocaleString()} total (${tk.total.inputTokens.toLocaleString()} in · ${tk.total.outputTokens.toLocaleString()} out · ${tk.total.calls} calls)`);
+  const cached = tk.total.cachedInputTokens
+    ? ` · ${tk.total.cachedInputTokens.toLocaleString()} in cached ${pct(tk.total.cachedShare)}`
+    : '';
+  L.push(`(c) tokens: ${tk.total.total.toLocaleString()} total (${tk.total.inputTokens.toLocaleString()} in · ${tk.total.outputTokens.toLocaleString()} out · ${tk.total.calls} calls${cached})`);
   const pad = (s, n) => String(s).padEnd(n);
   const padL = (s, n) => String(s).padStart(n);
   L.push(`      ${pad('kind', 10)} ${padL('calls', 6)} ${padL('in', 9)} ${padL('out', 9)} ${padL('total', 10)} ${padL('share', 7)}`);

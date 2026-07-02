@@ -341,6 +341,20 @@ sagecrawl reshape <runId> --ask "make a table of the prices"
 sagecrawl reshape <runId> --ask "split the menu into one file per category" --scan 01-example-com
 ```
 
+"Value-faithful" is **enforced, not just requested**:
+
+- **Relevant context, not blind truncation.** When the extraction exceeds the model
+  budget, the sections *relevant to your request* are retrieved and sent (verbatim,
+  in document order, omissions marked) — instead of the first N characters, which let
+  the model "answer" out-of-budget topics from its own memory.
+- **Fidelity check on every produced file.** Each value-like atom (numbers, URLs,
+  inline code, quoted literals, code lines) is verified against the **full** crawled
+  sources; values found nowhere are flagged with a warning banner inside the file and
+  reported per-file — never served silently as extracted facts. Opt out with
+  `--no-verify` (or `verify: false`).
+- **Re-emission filter.** A produced file near-identical (SimHash) to one already in
+  the chat is skipped with a note, so iterating doesn't litter the folder with copies.
+
 In the Web UI, open a saved link and use the **Reshape** panel — each answer is
 saved as a new file (under `<runId>/<scan>/chat/`) you can open and reuse. The
 crawl's own files are never modified.
@@ -350,7 +364,10 @@ crawl's own files are never modified.
 An evaluation harness turns the crawler's promises into **numbers you can compare
 before/after a change**: reveal completeness (did known interaction-hidden content
 survive?), sitemap coverage + run diff, task recall/precision against a golden set
-(SWDE-style), and **tokens per call type** (`reveal` / `scope` / `links` / `nav-plan`).
+(SWDE-style), and **tokens per call type** (`reveal` / `scope` / `links` / `nav-plan`),
+including the input slice served from the provider's **prompt cache** (the judgment
+system prompts are byte-stable on purpose, so OpenAI/DeepSeek/vLLM-style automatic
+prefix caching — and OpenRouter's explicit `cache_control` — makes repeat input ~10× cheaper).
 The scoring in [`src/eval/`](src/eval/) is pure and ships with the package; the runner
 that drives a real crawl is repo-only:
 

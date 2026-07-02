@@ -153,7 +153,9 @@ export function crawlDocs(targets, options = {}) {
   // `byKind` splits the same totals by WHICH judgment spent them (reveal / scope /
   // links / nav-plan / …), so the eval harness (src/eval) can show WHERE the tokens
   // go, not just the grand total. Same shape as the top-level counters, per kind.
-  const emptyTokens = () => ({ calls: 0, inputTokens: 0, outputTokens: 0, byKind: {} });
+  // `cachedInputTokens` (#4) counts the slice of inputTokens a remote provider served
+  // from its prompt cache (~10× cheaper) — visible proof the stable prefixes pay off.
+  const emptyTokens = () => ({ calls: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, byKind: {} });
   const scans = list.map((t, i) => ({
     scanId: scanIdFor(t.url, i),
     index: i,
@@ -284,17 +286,19 @@ export function crawlDocs(targets, options = {}) {
   // the saved run records how much AI it cost (the engine/profiles stay unaware).
   // `kind` (reveal/scope/links/nav-plan/…) is accumulated into `byKind` alongside the
   // grand totals, so the cost can be attributed per call type without any extra plumbing.
-  opts.llm.__onUsage = ({ kind = 'other', inputTokens = 0, outputTokens = 0 } = {}) => {
+  opts.llm.__onUsage = ({ kind = 'other', inputTokens = 0, outputTokens = 0, cachedInputTokens = 0 } = {}) => {
     const bump = (t) => {
       if (!t) return;
       t.calls += 1;
       t.inputTokens += inputTokens;
       t.outputTokens += outputTokens;
+      t.cachedInputTokens = (t.cachedInputTokens || 0) + cachedInputTokens;
       if (!t.byKind) t.byKind = {};
-      const k = t.byKind[kind] || (t.byKind[kind] = { calls: 0, inputTokens: 0, outputTokens: 0 });
+      const k = t.byKind[kind] || (t.byKind[kind] = { calls: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 });
       k.calls += 1;
       k.inputTokens += inputTokens;
       k.outputTokens += outputTokens;
+      k.cachedInputTokens = (k.cachedInputTokens || 0) + cachedInputTokens;
     };
     bump(result.stats.tokens);
     if (ctx.currentScan) bump(ctx.currentScan.stats.tokens);

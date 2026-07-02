@@ -84,7 +84,7 @@ la modifica e confrontare numero di pagine tenute, byte totali, e i blocchi rive
 | 1 | Link relevance ranking dalla task (information foraging) | consumi + precisione | Medio | ✅ fatto (2026-07-01, da verificare dal vivo) |
 | 2 | Output JSON vincolato (constrained decoding) | consumi + precisione | Basso | ✅ fatto (2026-07-01, da verificare dal vivo) |
 | 3 | Trigger "documentazione" universale (multilingua) | consumi + precisione | Basso-Medio | ✅ fatto (2026-07-01) |
-| 4 | Prompt caching del prefisso istruzioni (API remote) | consumi | Basso | ☐ da fare |
+| 4 | Prompt caching del prefisso istruzioni (API remote) | consumi | Basso | ✅ fatto (2026-07-02) |
 | 5 | Riuso contesto browser per worker (cache asset) | consumi (tempo+banda) | Basso-Medio | ✅ fatto (2026-07-01, verificato con browser reale) |
 | 6 | Crawl incrementale (ETag / Last-Modified / lastmod) | consumi (enorme per refdna) | Medio | ☐ da fare |
 | 7 | Dedup near-duplicate con SimHash | precisione output + consumi | Medio | ✅ fatto (2026-07-01, opt-in) |
@@ -96,7 +96,7 @@ la modifica e confrontare numero di pagine tenute, byte totali, e i blocchi rive
 | # | Titolo | Effetto | Sforzo | Stato |
 |---|--------|---------|--------|-------|
 | 10 | Output per-documento identificabile + metadata (opzione) | fruibilità | Medio | ✅ fatto (2026-07-01) |
-| 11 | Reshape (Fase 2): fedeltà verificata | rispetto-task | Medio | ☐ da fare |
+| 11 | Reshape (Fase 2): fedeltà verificata | rispetto-task | Medio | ✅ fatto (2026-07-02) |
 | 12 | Harness di misurazione (completezza / rispetto-task / token) | trasversale — abilita tutto | Medio | ✅ fatto (2026-07-01, da verificare dal vivo) |
 
 **Da fare per primi (qualità del crawl):** #1, #2, #3.
@@ -249,7 +249,35 @@ pagine restano intere (verbatim).
 ---
 
 ## #4 — Prompt caching del prefisso istruzioni (API remote)
-**Effetto:** consumi · **Sforzo:** Basso · **Stato:** ☐
+**Effetto:** consumi · **Sforzo:** Basso · **Stato:** ✅ FATTO (2026-07-02)
+
+> **Implementato**, in tre pezzi:
+> - **Contratto di stabilità.** I system-prompt delle chiamate di giudizio erano GIÀ
+>   literal senza interpolazione (il prefisso stabile che la cache automatica di
+>   OpenAI/DeepSeek/vLLM richiede); ora il contratto è esplicito (commento in
+>   [decide.mjs](src/engine/decide.mjs)) e **blindato da un test** che verifica
+>   byte-identici i system di links/reveal/scope/nav-plan su chiamate con task diverse
+>   — un'interpolazione accidentale futura fa fallire la suite.
+> - **Metering dei token cachati** (il criterio di accettazione). `openaiChat` legge
+>   il riporto del provider — `prompt_tokens_details.cached_tokens` (OpenAI/OpenRouter)
+>   o `prompt_cache_hit_tokens` (DeepSeek) — e lo propaga: `tokens.cachedInputTokens`
+>   nel run/scan/manifest (+ per-kind in `byKind`), tipi aggiornati, e l'harness #12
+>   mostra `N in cached X%` nel report. Ollama non lo riporta → 0 (il riuso KV locale
+>   resta invisibile ma gratuito).
+> - **`cache_control` esplicito SOLO su OpenRouter** (`buildOpenAiMessages` in
+>   [llm.mjs](src/lib/llm.mjs)): i modelli Anthropic dietro OpenRouter cachano solo i
+>   blocchi marcati, e OpenRouter documenta la forma content-parts per tutti i modelli
+>   (rimuove il campo dove non supportato). Ogni altro endpoint riceve la system
+>   string invariata — rischio zero. _Deliberatamente NON fatto:_ marcatore sul layer
+>   OpenAI-compat di Anthropic diretto (supporto non documentato; servirebbe un
+>   transport nativo Anthropic — fuori scope finché non serve).
+>
+> **Verificato** (suite permanente, 5 test nuovi, 90 totali): metering nelle due forme
+> di riporto + zero-fallback, forma OpenRouter vs plain, prefissi byte-identici.
+> ⏳ _Riscontro dal vivo:_ girare un crawl con `--provider openai` su
+> DeepSeek/OpenAI/OpenRouter e vedere `cachedInputTokens` crescere dopo le prime
+> chiamate di ogni tipo (su OpenAI serve prefisso ≥1024 token perché la cache
+> automatica scatti: i system ~400–600 token contano insieme allo schema/user).
 
 **Problema oggi.** I system-prompt in `decide.mjs` sono lunghi (~1.5–2.5k caratteri) e
 **identici** su migliaia di chiamate. Su API a pagamento sono token pagati ogni volta.
@@ -522,7 +550,43 @@ parent/child, metadata enrichment) — come esempio di un consumatore tipico.
 ---
 
 ## #11 — Reshape (Fase 2): fedeltà verificata
-**Effetto:** accuratezza · **Sforzo:** Medio · **Stato:** ☐
+**Effetto:** accuratezza · **Sforzo:** Medio · **Stato:** ✅ FATTO (2026-07-02)
+
+> **Implementato**, progettato su un fallimento OSSERVATO DAL VIVO (chat sul run Vuetify
+> 2026-07-01): fonte da 2.7MB, cap contesto 60KB → per "v-alert props" (oltre il cap) il
+> modello ha FABBRICATO una tabella di props dalla sua memoria (default `'Close'` dove la
+> doc vera dice `'$vuetify.close'`), servita senza alcun avviso. Tre pezzi:
+> - **Causa radice — retrieval del contesto** ([src/lib/retrieve.mjs](src/lib/retrieve.mjs)):
+>   quando le fonti superano il budget, `selectRelevant` seleziona le SEZIONI pertinenti
+>   all'istruzione (stessa tokenizzazione task→link del crawler, zero dipendenze) invece dei
+>   primi 60KB ciechi; verbatim, in ordine di documento, omissioni marcate; un documento
+>   nominato per filename o byte size ("the original 2788831b") viene incluso per primo.
+>   Fallback 'head' = comportamento storico quando nulla discrimina. Prompt rinforzato:
+>   "mai rispondere dalla tua conoscenza; se non è nelle fonti, dillo".
+> - **La verifica** ([src/lib/faithful.mjs](src/lib/faithful.mjs)): `verifyValues` estrae
+>   gli atomi valore-simili di ogni file prodotto (numeri/URL/inline-code/stringhe quotate/
+>   righe di codice — la prosa può essere riformulata, i VALORI no) e li cerca nelle fonti
+>   COMPLETE (non nel contesto del modello) + nell'istruzione dell'utente (un valore digitato
+>   dall'utente non è un'invenzione). I non-trovati: banner di avviso DENTRO il file (block-
+>   quote firmato sagecrawl, strippabile meccanicamente), `fidelity` per-file nel risultato/
+>   session.json, warning in CLI. Matching normalizzato e generoso (substring, numeri
+>   separator-insensitive): cattura affidabilmente il caso pericoloso (valori che non
+>   esistono da nessuna parte), non fa la polizia alla prosa. Default ON, `--no-verify` /
+>   `verify:false` per disattivare.
+> - **Contorno, sempre dall'esperienza**: filtro anti-riemissione (un file quasi identico
+>   — SimHash Hamming ≤3 — a uno già prodotto in chat viene saltato CON nota, erano 3 copie
+>   di "pagination" in un solo run) e timeout reshape 300s (il "redo the original" moriva a
+>   120s, che restano per le chiamate di giudizio del crawl).
+>
+> **Verificato** (suite permanente, 17 test nuovi, 83 totali): unit su retrieve/faithful +
+> **integrazione end-to-end** ([test/reshape.test.mjs](test/reshape.test.mjs)) che riproduce
+> in miniatura il caso Vuetify contro uno stub OpenAI-compatibile: la sezione giusta
+> raggiunge il modello (non il filler), `'elevated'` inventato → flaggato nel file salvato,
+> `'$vuetify.close'` reale → passa, ri-emissione → saltata con nota. ⏳ _Da provare dal vivo_
+> sul run Vuetify esistente (`sagecrawl reshape 20260701-095045-c57db0 --ask "dammi i props
+> del v-alert"`). _Limite onesto:_ un valore che ESISTE nelle fonti ma è attribuito alla
+> cosa sbagliata passa (serve il giudizio semantico, non deterministico); la rete cattura
+> l'invenzione, non la mis-attribuzione.
 
 **Problema oggi.** Il reshape ([src/reshape.mjs](src/reshape.mjs), `aiReshape` in
 [src/engine/decide.mjs](src/engine/decide.mjs)) è l'**unico** punto dove l'AI può

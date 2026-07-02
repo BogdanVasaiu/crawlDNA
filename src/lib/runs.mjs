@@ -75,18 +75,20 @@ const aggregatePages = (scans) => scans.reduce((n, s) => n + scanPages(s), 0);
  *  Merges the per-call-type `byKind` breakdown too, so the saved run keeps WHERE the
  *  tokens went (reveal/scope/links/nav-plan) and not just the grand total. */
 function aggregateTokens(scans) {
-  const t = { calls: 0, inputTokens: 0, outputTokens: 0, byKind: {} };
+  const t = { calls: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, byKind: {} };
   for (const s of scans) {
     const u = s && s.stats && s.stats.tokens;
     if (!u) continue;
     t.calls += u.calls || 0;
     t.inputTokens += u.inputTokens || 0;
     t.outputTokens += u.outputTokens || 0;
+    t.cachedInputTokens += u.cachedInputTokens || 0;
     for (const [kind, k] of Object.entries(u.byKind || {})) {
-      const dst = t.byKind[kind] || (t.byKind[kind] = { calls: 0, inputTokens: 0, outputTokens: 0 });
+      const dst = t.byKind[kind] || (t.byKind[kind] = { calls: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 });
       dst.calls += k.calls || 0;
       dst.inputTokens += k.inputTokens || 0;
       dst.outputTokens += k.outputTokens || 0;
+      dst.cachedInputTokens += k.cachedInputTokens || 0;
     }
   }
   return t;
