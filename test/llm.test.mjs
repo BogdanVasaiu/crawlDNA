@@ -1,7 +1,7 @@
 // resolveLlm — the provider descriptor every AI call is routed by. No network.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveLlm } from '../src/lib/llm.mjs';
+import { resolveLlm, llmDisabled, chat } from '../src/lib/llm.mjs';
 
 test('defaults to ollama with the standard local host', () => {
   const llm = resolveLlm({ model: 'qwen3-coder:30b' });
@@ -22,6 +22,18 @@ test('openai: origin-only base URL gets /v1 appended, an explicit path is respec
   assert.equal(mk('https://api.openai.com/'), 'https://api.openai.com/v1');
   assert.equal(mk('https://openrouter.ai/api/v1'), 'https://openrouter.ai/api/v1');
   assert.equal(mk('https://x.dev/v1/'), 'https://x.dev/v1');
+});
+
+test('noAi wins over everything → provider none; chat refuses it with a clear reason', async () => {
+  // Even a fully-configured provider is ignored: noAi means ZERO model calls.
+  const llm = resolveLlm({ noAi: true, provider: 'openai', model: 'gpt-4o-mini', baseUrl: 'https://x.dev', apiKey: 'k' });
+  assert.equal(llm.provider, 'none');
+  assert.equal(llm.model, '');
+  assert.equal(llmDisabled(llm), true);
+  assert.equal(llmDisabled(resolveLlm({ model: 'qwen3-coder:30b' })), false);
+  // The transport backstop: a leaked 'none' descriptor fails loud and clear (no
+  // network is touched — the guard throws before any request is built).
+  await assert.rejects(() => chat(llm, 'sys', 'user'), /disabled/);
 });
 
 test('openai: api key falls back to SAGECRAWL_API_KEY then OPENAI_API_KEY', () => {

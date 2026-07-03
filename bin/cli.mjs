@@ -51,9 +51,15 @@ Options:
                          default: "${DEFAULT_OPTIONS.task}"
   --url <url>            a target URL (repeatable; pair with --task for per-link tasks)
   --targets <file.json>  JSON file: a targets array ([{ "url", "task" }, ...])
-  --model <name>         model id for the engine (REQUIRED — e.g. qwen3-coder:30b for
-                         Ollama, or gpt-4o-mini for an OpenAI-compatible API)
+  --model <name>         model id for the engine (REQUIRED unless --no-ai — e.g.
+                         qwen3-coder:30b for Ollama, or gpt-4o-mini for an API)
   --provider <name>      ollama (default) | openai (any OpenAI-compatible API)
+  --no-ai                crawl without any model: the reveal engine still runs
+                         (heuristic-triaged clicks), but pages are kept whole and
+                         EVERY in-scope link is followed. Zero tokens, no model
+                         needed; output is not task-filtered and big sites can
+                         take longer — pair with --include/--exclude,
+                         --min-relevance or --max-pages to contain the crawl
   --base-url <url>       API base URL for --provider openai
                          (e.g. https://api.openai.com/v1, https://openrouter.ai/api/v1)
   --api-key <key>        API key for --provider openai
@@ -90,6 +96,7 @@ Reshape (Phase 2 — over a saved run):
 Examples:
   sagecrawl https://docusaurus.io/docs --task "Extract all documentation"
   sagecrawl https://pizzeria.example/menu --task "Extract the full menu"
+  sagecrawl https://site.dev --no-ai --max-pages 50        # classic crawl + reveal, zero tokens
   sagecrawl --url https://a.dev --task "Get pricing" --url https://b.dev --task "Get API docs"
   OPENAI_API_KEY=sk-… sagecrawl https://docs.dev --provider openai \\
     --base-url https://api.openai.com/v1 --model gpt-4o-mini
@@ -105,6 +112,7 @@ const OPTION_CONFIG = {
   targets: { type: 'string' },
   model: { type: 'string' },
   provider: { type: 'string' },
+  'no-ai': { type: 'boolean' },
   'base-url': { type: 'string' },
   'api-key': { type: 'string' },
   browser: { type: 'string' },
@@ -159,6 +167,7 @@ function optionsFromFlags(values) {
   const o = { save: true };
   if (values.model) o.model = values.model;
   if (values.provider) o.provider = values.provider;
+  if (values['no-ai']) o.noAi = true;
   if (values['base-url']) o.baseUrl = values['base-url'];
   if (values['api-key']) o.apiKey = values['api-key'];
   if (values.browser) o.browser = values.browser;

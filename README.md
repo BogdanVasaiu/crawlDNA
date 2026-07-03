@@ -67,6 +67,15 @@ above and run `npm run serve` (see [Web UI](#web-ui)).
   If the model isn't reachable the crawl still runs but **warns** that it has dropped
   to degraded heuristic mode (no AI reveal/scope/link-gating) — so you never get poor
   output without knowing why.
+
+  **Or crawl without a model at all** — `--no-ai` (the *Crawl without AI* checkbox in
+  the UI) makes that mode a deliberate choice: the reveal engine still clicks tabs,
+  accordions and "load more" (picked by DOM heuristics), but zero model calls are
+  made. Zero tokens, no model needed; the trade-off is that nothing is task-filtered —
+  pages are kept whole and **every in-scope link is followed**, so on a big site the
+  crawl can grow (the AI link gate is what normally keeps it small). Contain it with
+  `--max-pages`, `--include`/`--exclude` or `--min-relevance`. Reshape (Phase 2) is
+  chat with a model, so it still needs one.
 - **[Playwright](https://playwright.dev) Chromium** — needed for crawls that take
   actions / reveal hidden content (the engine). Pure structured or static extraction
   (e.g. a docs site exposing `llms-full.txt` or a sitemap) runs **without** it.
@@ -83,7 +92,7 @@ actually needs the browser.
 
 ```sh
 sagecrawl <url> [--task "..."]                       # crawl one site (Phase 1)
-sagecrawl crawl <url> [--task "..."] [--model qwen3-coder:30b]
+sagecrawl crawl <url> [--task "..."] [--model qwen3-coder:30b | --no-ai]
                     [--browser auto|never|always] [--concurrency 4]
                     [--include "..."] [--exclude "..."] [--max-pages 0]
                     [--cache-dir <dir>]
@@ -205,8 +214,9 @@ Array<{ url, task? }>                  // many targets, each with its own task
 | option | default | meaning |
 |---|---|---|
 | `task` | `"Extract the complete documentation."` | shared/default task |
-| `model` | — (**required**) | model id — Ollama (e.g. `"qwen3-coder:30b"`) or OpenAI-compatible (e.g. `"gpt-4o-mini"`) |
+| `model` | — (**required** unless `noAi`) | model id — Ollama (e.g. `"qwen3-coder:30b"`) or OpenAI-compatible (e.g. `"gpt-4o-mini"`) |
 | `provider` | `"ollama"` | `"ollama"` (local) \| `"openai"` (any OpenAI-compatible API) |
+| `noAi` | `false` | crawl with **zero model calls** (no model needed): reveal runs on DOM heuristics, pages are kept whole, every in-scope link is followed. Zero tokens; output is not task-filtered and big sites can take longer — contain with `maxPages`/`include`/`exclude`/`minRelevance` |
 | `baseUrl` | — | API base URL for `provider: "openai"` |
 | `apiKey` | — | API key for `provider: "openai"` (falls back to `SAGECRAWL_API_KEY` / `OPENAI_API_KEY`) |
 | `ollamaHost` | `127.0.0.1:11434` | override the Ollama server |

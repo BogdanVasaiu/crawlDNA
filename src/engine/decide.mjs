@@ -18,7 +18,14 @@
 // All model communication goes through the provider-agnostic transport layer.
 // These functions take an `llm` descriptor ({ provider, model, baseUrl, apiKey })
 // and never care whether it is backed by Ollama or an OpenAI-compatible API.
-import { chat } from '../lib/llm.mjs';
+//
+// NO-AI MODE (`noAi: true` → provider 'none'): every phase-1 judgment below
+// short-circuits to its completeness-bias fallback WITHOUT building a prompt or
+// touching the transport — heuristic reveal triage, keep pages whole, follow all
+// in-scope links, no targeted navigation. Identical behaviour to a model outage
+// (the fallbacks are shared), but intentional, warned once, and free of the
+// failed calls' latency. Zero tokens by construction.
+import { chat, llmDisabled } from '../lib/llm.mjs';
 import { selectRelevant } from '../lib/retrieve.mjs';
 
 /** Pull the first JSON value out of a model reply. */
@@ -316,6 +323,7 @@ export async function aiReshape({ llm, instruction, history = [], documents = nu
  * @returns {Promise<{ markdown: string, relevant: boolean }>}
  */
 export async function aiScopeContent({ llm, task, title, markdown }) {
+  if (llmDisabled(llm)) return { markdown, relevant: !!markdown }; // no-AI: keep whole
   if (!markdown || markdown.length < 1200) return { markdown, relevant: !!markdown };
 
   const sections = sectionize(markdown);
@@ -365,6 +373,7 @@ export async function aiScopeContent({ llm, task, title, markdown }) {
 export async function aiSelectLinks({ llm, task, links }) {
   const capped = links.slice(0, 160);
   if (capped.length === 0) return [];
+  if (llmDisabled(llm)) return capped.map((l) => l.href); // no-AI: follow all in-scope
 
   const list = capped.map((l, i) => `${i}: ${l.label ? l.label.slice(0, 60) + ' — ' : ''}${l.href}`).join('\n');
   const ans = await chat(
@@ -428,6 +437,8 @@ export async function aiSelectLinks({ llm, task, links }) {
 export async function aiPlanNavigation({ llm, task, current = {}, controls = [] }) {
   const list = (controls || []).slice(0, 60);
   if (list.length === 0) return { direction: null, target: null };
+  // no-AI: no targeted walk — the reveal loop explores every control open-ended.
+  if (llmDisabled(llm)) return { direction: null, target: null };
 
   const lines = list
     .map((c, i) => `${i}: [${c.kind || 'control'}] "${(c.label || '(no label)').slice(0, 70)}"` + (c.context ? ` — under "${c.context}"` : ''))
@@ -484,6 +495,9 @@ export async function aiPlanNavigation({ llm, task, current = {}, controls = [] 
 export async function aiSelectRevealers({ llm, task, candidates }) {
   const list = (candidates || []).slice(0, 150);
   if (list.length === 0) return new Set();
+  // no-AI: null = "use the per-candidate DOM heuristic" (same signal as a model
+  // outage), so reveal coverage never drops below the deterministic baseline.
+  if (llmDisabled(llm)) return null;
 
   const lines = list
     .map(

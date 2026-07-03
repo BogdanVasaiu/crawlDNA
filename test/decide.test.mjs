@@ -255,3 +255,46 @@ test('aiPlanNavigation validates the planned direction and target', async () => 
   });
   assert.equal(calls, 0, 'no controls = no model call');
 });
+
+// --- no-AI mode (noAi → provider 'none') ---------------------------------------
+// The deliberate zero-token mode: every phase-1 judgment must short-circuit to its
+// completeness-bias fallback BEFORE the transport. Each stub handler below would
+// produce the OPPOSITE result if a call slipped through, and `calls` must stay 0.
+
+const none = { provider: 'none', model: '', baseUrl: '', apiKey: '' };
+
+test('no-AI: every in-scope link is followed with ZERO model calls', async () => {
+  reset(() => '{"follow":[]}'); // a leaked call would follow NOTHING
+  const ctx = { currentScan: {}, options: { llm: none, minRelevance: 0 } };
+  const keep = await decideFollow(ctx, 'estrai la documentazione', links(5));
+  assert.equal(keep.length, 5, 'no link gate: all in-scope candidates are followed');
+  assert.equal(calls, 0, 'no-AI mode must never touch the transport');
+});
+
+test('no-AI: pages kept whole, heuristic reveal, open-ended navigation — zero calls', async () => {
+  reset(() => '{"keep":[]}');
+  const scoped = await aiScopeContent({ llm: none, task: 't', title: 'T', markdown: sectioned });
+  assert.deepEqual(scoped, { markdown: sectioned, relevant: true });
+
+  const cands = [{ signature: 'tab|X|', kind: 'tab', label: 'X' }];
+  assert.equal(await aiSelectRevealers({ llm: none, task: 't', candidates: cands }), null,
+    'null = the caller falls back to the per-candidate DOM heuristic');
+
+  const controls = [{ signature: 's2', kind: 'control', label: 'successivo' }];
+  assert.deepEqual(await aiPlanNavigation({ llm: none, task: 'settembre', current: {}, controls }),
+    { direction: null, target: null }, 'no targeted walk — explore everything');
+
+  assert.equal(calls, 0, 'no-AI mode must never touch the transport');
+});
+
+test('no-AI: focused mode (minRelevance) still prunes deterministically, without a model', async () => {
+  reset(echoAll);
+  const cands = [
+    { href: 'https://s.it/documentazione/intro', label: 'Documentazione' },
+    { href: 'https://s.it/contatti', label: 'Contatti' },
+  ];
+  const ctx = { currentScan: {}, options: { llm: none, minRelevance: 0.5 } };
+  const keep = await decideFollow(ctx, 'estrai la documentazione', cands);
+  assert.deepEqual(keep, ['https://s.it/documentazione/intro']);
+  assert.equal(calls, 0);
+});

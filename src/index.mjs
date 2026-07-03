@@ -16,7 +16,7 @@ import { saveRun, scanIdFor, initRun, appendJournal, loadRunForResume, cacheRoot
 import { retainBrowser, releaseBrowser, configureContextPool } from './lib/browser.mjs';
 import { normalizeUrl, inScope, pathOf, originOf, hostOf, siblingKey } from './lib/url.mjs';
 import { isDocsTask } from './lib/task.mjs';
-import { resolveLlm, checkModel, abortPendingLlm } from './lib/llm.mjs';
+import { resolveLlm, checkModel, abortPendingLlm, llmDisabled } from './lib/llm.mjs';
 import { simhash, hamming } from './lib/simhash.mjs';
 
 export const DEFAULT_OPTIONS = {
@@ -26,6 +26,13 @@ export const DEFAULT_OPTIONS = {
   // no model that is universally present, so pretending one exists only produces a
   // silent failure. Pick one explicitly (see `provider`).
   provider: 'ollama', // 'ollama' (local) | 'openai' (any OpenAI-compatible API: URL + key)
+  noAi: false, // CRAWL WITHOUT AI. The engine keeps its full mechanics — render, reveal
+  // (heuristic-triaged clicks), extract, dedup — but makes ZERO model calls: pages are
+  // kept whole (no section scoping) and EVERY in-scope link is followed (no link gate).
+  // Costs no tokens and needs no model; trade-off: the output is not task-filtered and
+  // a large site may take LONGER overall (the AI link gate is what keeps a crawl small).
+  // Pair with include/exclude, minRelevance or maxPages to contain it. The task still
+  // matters deterministically: docs detection, best-first frontier ordering, route budget.
   ollamaHost: undefined, // override the Ollama server URL (default: http://127.0.0.1:11434)
   baseUrl: undefined, // OpenAI-compatible API base URL (provider 'openai')
   apiKey: undefined, // API key (provider 'openai'); falls back to SAGECRAWL_API_KEY / OPENAI_API_KEY
@@ -477,16 +484,29 @@ export function crawlDocs(targets, options = {}) {
       // link-gating) and the caller would get poor output with no clue why. Warn
       // loudly instead — the crawl still runs (heuristics keep it from losing
       // content), but the reason is now visible.
-      const health = await checkModel(opts.llm);
-      if (!health.ok) {
+      if (llmDisabled(opts.llm)) {
+        // Deliberate no-AI mode: same heuristics, but CHOSEN — say what that means
+        // once (this is the run's one no-AI notice) and skip the health ping.
         emit({
           type: 'warn',
-          reason: 'model',
+          reason: 'no-ai',
           message:
-            `Model not usable (${health.reason}). Running in DEGRADED heuristic mode — ` +
-            `AI reveal/scope/link-gating are OFF. Set a working model: a running local ` +
-            `Ollama model (e.g. model:'qwen3-coder:30b'), or provider:'openai' with baseUrl + apiKey.`,
+            'AI is off for this run (no-AI mode): heuristic reveal, pages kept whole, ' +
+            'every in-scope link followed. Zero tokens — but the output is not ' +
+            'task-filtered; use include/exclude, minRelevance or maxPages to contain the crawl.',
         });
+      } else {
+        const health = await checkModel(opts.llm);
+        if (!health.ok) {
+          emit({
+            type: 'warn',
+            reason: 'model',
+            message:
+              `Model not usable (${health.reason}). Running in DEGRADED heuristic mode — ` +
+              `AI reveal/scope/link-gating are OFF. Set a working model: a running local ` +
+              `Ollama model (e.g. model:'qwen3-coder:30b'), or provider:'openai' with baseUrl + apiKey.`,
+          });
+        }
       }
 
       for (const scan of scans) {

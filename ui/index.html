@@ -458,6 +458,9 @@
   .rs-input button:disabled { opacity:.5; cursor:not-allowed; transform:none; }
 
   .hidden { display:none !important; }
+  /* no-AI mode: the provider/model setup stays visible but inert, so it's clear
+     WHAT the checkbox turned off (and one click brings it back) */
+  #aiSetup.ai-off { opacity:.4; pointer-events:none; user-select:none; }
 
   /* ===================== responsive ===================== */
   /* ---- tablet / narrow desktop ---- */
@@ -550,6 +553,17 @@
     <button id="addRow">+ add link</button>
 
     <div class="opts">
+      <div class="chk" style="margin:0 0 6px">
+        <input type="checkbox" id="noAi" />
+        <label for="noAi">Crawl without AI <span style="color:var(--t4)">— zero tokens, no model needed</span></label>
+      </div>
+      <p class="hint" id="noAiHint" style="display:none; margin:0 0 12px">
+        Classic crawl <b>plus the reveal engine</b> (tabs, accordions, “load more” are still
+        clicked, picked by heuristics). Nothing is task-filtered: pages are kept whole and
+        <b>every in-scope link is followed</b> — on a big site that can mean <i>more</i> pages
+        and time, not less. Contain it with Max pages, Include/Exclude or Focus on task.
+      </p>
+      <div id="aiSetup">
       <label>AI provider</label>
       <div class="seg" id="provider-seg">
         <button type="button" class="seg-btn active" data-provider="ollama">Ollama · local</button>
@@ -621,6 +635,7 @@
         </div>
         <div id="ollamaHostCell"><label>Ollama host</label><input id="ollamaHost" value="http://localhost:11434" /></div>
       </div>
+      </div><!-- /aiSetup -->
 
       <!-- everything non-essential lives behind one fold: the first screen stays
            "links + task + AI", which is all a first crawl needs -->
@@ -949,6 +964,7 @@ function collectOptions() {
     concurrency: Number($('concurrency').value) || 4,
     maxPages: Number($('maxPages').value) || 0,
   };
+  if ($('noAi').checked) o.noAi = true; // wins over model/provider in the core
   if (provider === 'openai') {
     o.baseUrl = $('apiBaseUrl').value.trim() || undefined;
     const k = $('apiKey').value.trim();
@@ -1172,6 +1188,17 @@ $('apiBaseUrl').onchange = refreshModels;
 $('apiKey').onchange = refreshModels;
 $('apiModel').oninput = onApiModelInput;
 $('provider-seg').querySelectorAll('.seg-btn').forEach((b) => (b.onclick = () => setProvider(b.dataset.provider)));
+
+// No-AI mode: dim the whole provider/model setup (it's ignored by the core when
+// noAi is on) and show what the mode actually means. Persisted like the provider.
+function applyNoAi(on) {
+  $('aiSetup').classList.toggle('ai-off', on);
+  $('noAiHint').style.display = on ? '' : 'none';
+}
+$('noAi').onchange = (e) => {
+  applyNoAi(e.target.checked);
+  try { localStorage.setItem('sagecrawl.noAi', e.target.checked ? '1' : ''); } catch {}
+};
 
 // ---------- history (two lists: links + runs) ----------
 async function renderHistory() {
@@ -2010,7 +2037,7 @@ function connect() {
 $('start').onclick = async () => {
   const targets = collectTargets();
   if (!targets.length) { alert('Add at least one link.'); return; }
-  if (!selectedModel) {
+  if (!selectedModel && !$('noAi').checked) {
     alert(provider === 'openai'
       ? 'Set a model id first. Enter the base URL (+ key), then Fetch models or type the id.'
       : 'Select a model first. If the list is empty, make sure Ollama is running, then Re-check.');
@@ -2050,6 +2077,7 @@ try {
   const savedApiModel = localStorage.getItem('sagecrawl.model.openai');
   if (savedApiModel) $('apiModel').value = savedApiModel;
   selectedModel = localStorage.getItem('sagecrawl.model') || '';
+  if (localStorage.getItem('sagecrawl.noAi') === '1') { $('noAi').checked = true; applyNoAi(true); }
 } catch {}
 renderHistory();
 let savedProvider = 'ollama';

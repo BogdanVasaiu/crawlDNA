@@ -130,12 +130,27 @@ function joinUrl(base, path) {
 }
 
 /**
+ * Is this descriptor the deliberate NO-AI mode? The judgment layer (decide.mjs)
+ * checks this to skip its model calls entirely and use the deterministic
+ * fallbacks it already has — same behaviour as a model outage, minus the failed
+ * calls' latency. One predicate so "AI off" is spelled the same way everywhere.
+ */
+export function llmDisabled(llm) {
+  return !llm || llm.provider === 'none';
+}
+
+/**
  * Normalise raw options into a `{ provider, model, baseUrl, apiKey }` descriptor.
  * Backward compatible: an absent provider means 'ollama', and `ollamaHost` keeps
  * working. For the 'openai' provider, the API key falls back to the environment
  * (SAGECRAWL_API_KEY, then OPENAI_API_KEY) so it never has to be put on the CLI.
  *
+ * `noAi: true` wins over everything: it yields the provider-'none' descriptor —
+ * the crawl runs on its deterministic fallbacks (heuristic reveal, keep whole,
+ * follow all in-scope) and never contacts a model, so no model is required.
+ *
  * @param {object} [options]
+ * @param {boolean} [options.noAi]      disable AI entirely (provider 'none')
  * @param {string} [options.provider]   'ollama' (default) | 'openai'
  * @param {string} [options.model]
  * @param {string} [options.baseUrl]    OpenAI-compatible API base URL
@@ -143,6 +158,7 @@ function joinUrl(base, path) {
  * @param {string} [options.ollamaHost] Ollama server URL (legacy / ollama provider)
  */
 export function resolveLlm(options = {}) {
+  if (options.noAi) return { provider: 'none', model: '', baseUrl: '', apiKey: '' };
   const provider = PROVIDERS.has(String(options.provider || '').toLowerCase())
     ? String(options.provider).toLowerCase()
     : 'ollama';
@@ -337,7 +353,11 @@ async function openaiChat(llm, system, user, schema, timeoutMs = REQUEST_TIMEOUT
  * @returns {Promise<string>}
  */
 export async function chat(llm, system, user, schema = null, kind = '') {
-  if (!llm || !llm.model) throw new Error('no model selected');
+  // Defensive backstop: decide.mjs short-circuits before ever reaching here in
+  // no-AI mode; anything else that leaks a 'none' descriptor (e.g. reshape) gets
+  // a clear reason instead of a misleading "no model selected".
+  if (llmDisabled(llm)) throw new Error('AI is disabled for this run (no-AI mode) — no model calls are made');
+  if (!llm.model) throw new Error('no model selected');
   const provider = llm.provider === 'openai' ? 'openai' : 'ollama';
   // Meter concurrent calls per provider (tight for local, generous for remote).
   return limiterFor(provider).run(async () => {
