@@ -637,9 +637,11 @@ export async function revealAll(page, ctx, url, task) {
   return {
     markdown: acc.toMarkdown(),
     blocks: acc.toBlocks(), // raw { text, provenance } in capture order, for layout
-    // The FAITHFUL per-state record: every captured state, whole and verbatim. The
-    // consolidated markdown is compact (shared frame once); this keeps each state's
-    // full co-occurrence recoverable, so a partial change never loses its structure.
+    // The FAITHFUL per-state record: every DISTINCT captured state, whole and
+    // verbatim (byte-identical repeats — a chrome click that changed no content —
+    // collapsed by states()). The consolidated markdown is compact (shared frame
+    // once); this keeps each state's full co-occurrence recoverable, so a partial
+    // change never loses its structure.
     states: acc.states(),
     title,
     links,

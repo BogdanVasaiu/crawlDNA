@@ -266,7 +266,7 @@ export function assembleStates({ pages }) {
     const p = all[i];
     const id = stableId(p.url || '', i);
     const parts = [docFrontMatter({ url: p.url, title: (p.title || '').trim(), fetchedAt: (p.meta && p.meta.fetchedAt) || '' })];
-    parts.push(`> Faithful reveal record — ${p.states.length} captured states, each whole and verbatim.`);
+    parts.push(`> Faithful reveal record — ${p.states.length} distinct states, each whole and verbatim.`);
     p.states.forEach((s, k) => {
       const name = s.label || (s.provenance && s.provenance !== 'baseline' ? s.provenance : k === 0 ? 'base' : `state ${k + 1}`);
       parts.push(`## State: ${name}\n\n${String(s.markdown || '').trim()}`);

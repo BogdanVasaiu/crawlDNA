@@ -1810,12 +1810,27 @@ cambiano raggruppati per stato ed etichettati — **più** gli stati interi salv
   (layout.mjs/output.mjs). Fuori dal manifest; layout di default invariato quando non ci
   sono pagine multi-stato.
 
-**Verificato:** 220 test offline verdi (5 nuovi: esempio esatto `A,b,c/A,b,d/r,b,d` →
+**Verificato:** 222 test offline verdi (7 nuovi: esempio esatto `A,b,c/A,b,d/r,b,d` →
 frame `b` una volta + gruppi etichettati; `states()` ritorna i 3 snapshot interi; load-more
-a 3 stati senza duplicati; `assembleStates` scrive solo pagine multi-stato / verbatim). I
-test esistenti di #24/#27 (tab adiacenti, order, ancora debole, load-more) passano
-**invariati**. ⏳ Da confermare dal vivo su una pagina con tab/viste app (ispezionare il
-`.md` consolidato e i file `states/…`).
+a 3 stati senza duplicati; `assembleStates` scrive solo pagine multi-stato / verbatim; +2
+dedup — catture byte-identiche collassate ma distinti tenuti / pagina sottile → nessun file).
+I test esistenti di #24/#27 (tab adiacenti, order, ancora debole, load-more) passano
+**invariati**. ✅ **Confermato dal vivo (2026-07-05)** su vuetifyjs.com (run no-AI): il
+consolidato è compatto e corretto (`# useGoTo API` una volta pur con 29 catture); le varianti
+VERE (carousels/date-pickers) restano intere.
+
+**Follow-up dedup `states/` (2026-07-05).** La verifica dal vivo ha scoperto l'incrocio
+#28×#29: i click di chrome (#28 — tema/login/tab che aprono solo un menu) catturano stati
+EGUALI al base; `states()` li registrava TUTTI → i file `states/` erano al **90% duplicati**
+(11.824 sezioni → 1.184 uniche; 280 file su 500 con stati tutti identici; 78 MB), e il gate
+`>1` scriveva un file anche per pagine a stato-di-contenuto singolo. Fix deterministico (zero
+AI, nessun contenuto perso): `states()` collassa gli snapshot **byte-identici** (firma = lista
+ordinata di key-hash di contenuto) tenendo il primo → i gate `>1` in crawl-page/layout
+diventano "distinti >1". Il click resta comunque in `activity.json`; il consolidato (`_render`)
+e il loop di reveal NON sono toccati. **Ri-verificato dal vivo** (run `20260704-231000`, no-AI):
+500→**212** file, 11.824→**842** sezioni (**0 ridondanti**), 78→**4,6 MB**, `en-api-use-go-to.md`
+non più generato. File: `src/extract.mjs` (`states()`), `src/lib/layout.mjs` (header "distinct"),
+commenti in `reveal.mjs`/`crawl-page.mjs`, `test/extract.test.mjs`.
 
 **File:** `src/extract.mjs` (`BlockAccumulator`: `_states`/`store`, `add`, `_render`,
 `toMarkdown`, `states`), `src/engine/reveal.mjs` (ritorna `states`), `src/engine/crawl-page.mjs`

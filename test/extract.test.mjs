@@ -360,6 +360,34 @@ test('states() is the FAITHFUL per-state record — every snapshot whole and ver
   assert.equal(snaps[2].provenance, 'control:S3');
 });
 
+test('states() collapses BYTE-IDENTICAL captures (chrome clicks that changed no content) but keeps distinct ones', () => {
+  // The #28/#29 interaction: a thin page whose top-nav/header chrome (theme, login,
+  // a tab that only opened a menu) gets clicked — each click captures a state EQUAL
+  // to the base. The faithful record must keep DISTINCT content states, not 1 copy
+  // per click (a live run had ~26 identical snapshots on one page).
+  const acc = new BlockAccumulator();
+  acc.add('AAA\n\nBBB'); // base
+  acc.add('AAA\n\nBBB', { label: 'Light', provenance: 'control:Light' }); // theme → no content change
+  acc.add('AAA\n\nBBB', { label: 'Dark', provenance: 'control:Dark' }); // same
+  acc.add('AAA\n\nBBB', { label: 'Login', provenance: 'control:Login' }); // same
+  acc.add('AAA\n\nCCC', { label: 'Tab', provenance: 'tab:Real', order: 100 }); // a REAL variant
+  const snaps = acc.states();
+  assert.equal(snaps.length, 2, 'four identical captures collapse to one; the real variant is kept');
+  assert.equal(snaps[0].markdown, 'AAA\n\nBBB', 'first (base) kept whole');
+  assert.equal(snaps[0].provenance, 'baseline', 'the first occurrence, not a later chrome label, is retained');
+  assert.equal(snaps[1].markdown, 'AAA\n\nCCC', 'the distinct state survives verbatim');
+  assert.equal(snaps[1].label, 'Tab');
+});
+
+test('states() drops the whole record when every capture is identical (thin page → no states/ file)', () => {
+  // 1 distinct content state ⇒ length is NOT > 1 ⇒ the crawl-page/layout gate writes
+  // no states/ file for it (this is the 280-of-500 spurious files the run showed).
+  const acc = new BlockAccumulator();
+  acc.add('# useGoTo API\n\n[scrolling](x)');
+  for (const l of ['Light', 'Dark', 'System', 'Login', 'Esc']) acc.add('# useGoTo API\n\n[scrolling](x)', { label: l, provenance: `control:${l}` });
+  assert.equal(acc.states().length, 1, 'all six captures are one content state — gate (>1) yields no file');
+});
+
 // --- #26: visual headings — the .md keeps the skeleton the page painted -----
 // Node path: inline styles stand in for computed styles (the browser twin in
 // engine/perceive.mjs is verified live, like #25).

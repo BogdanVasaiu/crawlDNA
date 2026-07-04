@@ -1010,17 +1010,35 @@ export class BlockAccumulator {
     return this.store.size; // count of UNIQUE blocks held
   }
 
-  /** The FAITHFUL per-state record: each captured state reconstructed VERBATIM from
-   *  its own ordered blocks — the complete snapshot (A,b,c / A,b,d / r,b,d). This is
-   *  where full co-occurrence lives, so a partial change never strands a fragment
-   *  out of the state it belongs to. Consumed as the `states/…` artifact. */
+  /** The FAITHFUL per-state record: each DISTINCT captured state reconstructed
+   *  VERBATIM from its own ordered blocks — the complete snapshot (A,b,c / A,b,d /
+   *  r,b,d). This is where full co-occurrence lives, so a partial change never
+   *  strands a fragment out of the state it belongs to.
+   *
+   *  BYTE-IDENTICAL captures are collapsed to their first occurrence (the block
+   *  keys are content hashes, so an identical ordered key list IS an identical
+   *  snapshot). A chrome control whose click changed no content — theme toggle,
+   *  login, a nav tab that only opened a menu (#28) — captures a state equal to
+   *  one already held; it carries ZERO new content here, and the click itself is
+   *  preserved in the activity log, not this content record. Dropping the repeat
+   *  keeps the distinct states legible instead of burying them (a thin page had
+   *  ~26 identical chrome snapshots). Never drops a state whose content differs.
+   *  Consumed as the `states/…` artifact. */
   states() {
-    return this._states.map((s) => ({
-      label: s.label,
-      provenance: s.provenance,
-      order: s.order,
-      markdown: s.keys.map((k) => this.store.get(k)).join('\n\n'),
-    }));
+    const seen = new Set();
+    const out = [];
+    for (const s of this._states) {
+      const sig = s.keys.join('|'); // hex hashes → identical sig ⇔ byte-identical snapshot
+      if (seen.has(sig)) continue;
+      seen.add(sig);
+      out.push({
+        label: s.label,
+        provenance: s.provenance,
+        order: s.order,
+        markdown: s.keys.map((k) => this.store.get(k)).join('\n\n'),
+      });
+    }
+    return out;
   }
 
   /** Raw blocks (`{ text, provenance }`) in reading order for the layout router. */
