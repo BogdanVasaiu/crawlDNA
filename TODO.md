@@ -114,6 +114,8 @@ la modifica e confrontare numero di pagine tenute, byte totali, e i blocchi rive
 | 24 | Fedeltà di layout dell'.md (varianti in posizione, link esterni, indentazione) | precisione output — leggibilità | Medio | ✅ fatto (2026-07-04) |
 | 25 | App incorporate: viste raggiunte (nav-in-main), budget protetto (futility guard), liste/tabelle leggibili | precisione reveal + leggibilità output | Medio | ✅ fatto (2026-07-04) |
 | 26 | Recupero heading per peso visivo (scheletro dell'.md, deterministico) | precisione output — struttura, abilita meglio il reshape | Medio | ☐ da fare |
+| 28 | Copertura totale dei cliccabili: controlli JS nella chrome (nav/header/footer) | precisione reveal — nessun cliccabile perso | Basso-Medio | ✅ fatto (2026-07-04) |
+| 29 | Reveal "compatto ma strutturato" + record fedele per-stato (`states/`) | precisione output — struttura/contesto tra stati | Medio | ✅ fatto (2026-07-04) |
 
 **Gruppo C — Affidabilità & operazioni** (dalla revisione ingegneristica 2026-07-02)
 
@@ -1672,6 +1674,155 @@ non-heading è byte-identico — regola #1).
 (inline atomico in captureHtml), `src/extract.mjs` (gemello Node + regola turndown),
 `test/extract.test.mjs`.
 
+**Correzione (2026-07-04, feedback utente sull'ordine).** Due difetti trovati sulla
+run successiva e corretti insieme:
+1. **Bug #26 introdotto**: il marcatore di heading scattava DENTRO le righe ripetute
+   che #25 appiattisce a bullet (tile della gallery, stat card, swatch colore),
+   producendo `- #### Misty Mountains` o `### 24.5K` a metà riga. Il controllo
+   sui fratelli guardava solo l'elemento stesso, ma il titolo è spesso un
+   title-wrapper ANNIDATO nella card. Fix: `isShapedRow` alzato a scope di modulo
+   (una sola definizione condivisa da shapedRowItem e dal marcatore) e il candidato
+   ora esclude sé stesso E gli antenati che sono righe-appiattite (in entrambi i
+   path). Summary/Transactions/Recent Orders sopravvivono (le loro card hanno una
+   tabella/lista o <3 fratelli same-shape). Bug secondario risolto lungo la strada:
+   node-html-parser usa `tagName`, non `nodeName` → `isShapedRow` falliva su TUTTI i
+   nodi del path statico; introdotto `tagOf()` che copre entrambi i DOM (turndown/
+   domino ha nodeName, node-html-parser ha tagName).
+
+## #27 — Ordine di rappresentazione dell'.md (viste app in ordine di pagina, base per prima)
+**Effetto:** precisione output — struttura/leggibilità, migliore input per il reshape · **Sforzo:** Medio · **Stato:** ✅ FATTO (2026-07-04)
+
+**Problema (feedback utente).** In un'app incorporata le viste (Dashboard/Analytics/
+Chat/Settings) si scambiano NELLO STESSO pannello: condividono solo la cornice attorno,
+non contenuto tra loro. Il merge ancorato di #24 (che allinea le varianti tab pnpm/yarn
+perché condividono i blocchi attorno) le impilava invece in ordine di CLICK, e la vista
+di default (Dashboard, quella più vicina al link base) finiva ULTIMA. Misurato sulla run
+20260704-101234: Analytics → Chat → Settings → Dashboard. L'utente: l'ordine deve essere
+per PROSSIMITÀ al link base e per ordine di RAPPRESENTAZIONE.
+
+**Fix (deterministico, zero AI).**
+- **`order` per stato** = posizione verticale ASSOLUTA del controllo che rivela la vista
+  (`top` = `rect.top + scrollY`, aggiunto ai revealer in perceive; passato da reveal a
+  `capture()` → `BlockAccumulator.add`). La barra di navigazione di un'app va
+  Dashboard→Analytics→Chat→Settings dall'alto in basso, quindi le viste escono in
+  quell'ordine invece che nell'ordine di click. Le strip di tab orizzontali condividono
+  `top` → mantengono l'ordine di scoperta (stabile). Baseline e scroll pigro = 0.
+- **`_spliceByOrder`**: dentro uno stesso slot (ancora condivisa) i gruppi si ordinano per
+  `order` (stabile). NON cambia nulla con tutti order 0 (path tab/load-more): il sort si
+  attiva solo per un order positivo → retro-compatibile al byte.
+- **Ancore deboli saltate**: una riga orizzontale (`---`) o uno stub ≤2 char è un divisore
+  di cornice che RICORRE identico in ogni vista; ancorare una vista scambiata su di esso la
+  fa cadere SOPRA il contenuto della vista di default (che sta appena sotto lo stesso
+  divisore). Il merge ora salta le ancore deboli e si aggancia al primo blocco DISTINTIVO
+  (es. "Sponsors & Backers"), così le viste rivelate atterrano DOPO la base, in ordine di
+  pagina. Questo è ciò che ha spostato Dashboard in prima posizione.
+
+**Verificato dal vivo** (run finale, home vuetifyjs.com, `--no-ai`, dump ordine blocchi):
+Component Gallery → **Dashboard (base): stat card, Recent Orders, Transactions, Summary** →
+Analytics (Top Pages) → Settings (Security/Notifications) → Chat → Settings (Profile) →
+Sponsors & Backers → resto marketing. La base è prima, le viste seguono in ordine di
+nav-rail, il marketing resta al suo posto. 213 test offline verdi (6 nuovi #26/#27:
+tile annidata resta bullet, stat-value con unità niente `###`, viste mutuo-esclusive in
+ordine di pagina base-prima, ancora debole saltata, gruppo multi-blocco contiguo,
+order-0 = merge legacy invariato). Limite onesto: il contenuto Settings può spezzarsi se
+rivelato da controlli a `top` diversi (gear nav vs strip di tab) — cosmetico; la struttura
+di sezione è corretta.
+
+**File:** `src/engine/perceive.mjs` (`top` sui revealer), `src/engine/reveal.mjs`
+(`order` in `capture`), `src/extract.mjs` (`add` order-aware + `_spliceByOrder` +
+`isWeakAnchor`), `test/extract.test.mjs`.
+
+---
+
+## #28 — Copertura totale dei cliccabili: controlli JS nella chrome (nav/header/footer)
+**Effetto:** precisione reveal — nessun cliccabile perso · **Sforzo:** Basso-Medio · **Stato:** ✅ FATTO (2026-07-04)
+
+**Problema (feedback utente).** "Voglio la copertura massima sugli elementi cliccabili,
+che non ne manchi nessuno — prima mancava il nav." La percezione limitava i candidati
+reveal al SOLO contenuto principale (`mainEl.querySelectorAll`) ed escludeva la site chrome
+(`isChrome`), con la sola eccezione #25 dei landmark ANNIDATI in un main reale. Un nav di
+alto livello (SPA top-nav / app rail in un `<nav>`/`<header>` FUORI dal main) i cui pulsanti
+scambiano la vista in-place SENZA URL non veniva né iterato né cliccato → ogni vista
+non-default silenziosamente persa (regola #1).
+
+**Fix (universale, misurato, identico in `--no-ai`).**
+- **Due liste sullo stesso setaccio, main-first** (perceive): pass 1 = contenuto principale,
+  pass 2 = tutto il body per i suoi CONTROLLI JS di chrome (`considered` deduplica la
+  sovrapposizione, quindi il main è processato una volta, per primo). Un `<a href>` di nav
+  resta un LINK (raccolto e crawlato come pagina propria), mai un revealer. Un controllo JS
+  di chrome (o una disclosure MISURATA: `aria-expanded`/`aria-controls`, es. un `<details>`
+  di footer) viene tenuto e marcato `chrome`.
+- **Penalità `chrome` in `revealPriority`** (reveal): il contenuto prende SEMPRE il budget
+  d'azione per primo; la chrome lo scavalca solo con prova MISURATA forte (payload reale /
+  disclosure chiusa), mai su un semplice indizio di kind/label. Onora la vecchia filosofia
+  "budget sul contenuto, non sulla nav globale" pur coprendo la nav.
+- **`chrome` = solo VERA site chrome**: un elemento annidato in un main reale NON è marcato
+  (preserva #25 esattamente, senza penalità); la chrome vera è ciò che sta FUORI dal main
+  (o l'intera pagina col fallback `<body>`).
+- **Riuso id consent↔revealer**: ora che pass 2 scandaglia tutta la pagina, un pulsante di
+  header sticky / banner può essere sia consentCandidate sia revealer; il revealer RIUSA
+  l'id già stampato dal blocco consent invece di sovrascriverlo → la dismissione cookie non
+  si rompe e la copertura sticky è preservata.
+
+Le guardie del ciclo chiuso già esistenti (shape-muting dopo 3 click a vuoto, ordinamento
+per payload misurato, il triage AI che scarta la nav pura) limitano il rumore di chrome —
+in `--no-ai` tutti approvati, ma l'ordinamento misurato + il muting bloccano lo spreco.
+
+**Verificato:** 215 test offline verdi (2 nuovi in reveal-loop: penalità chrome vs gemello
+di contenuto, con la prova misurata che vince comunque; no-AI che copre un view-switcher di
+chrome MA clicca prima il controllo di contenuto). ⏳ Da confermare dal vivo su una SPA con
+top-nav JS (il nav che prima mancava ora compare tra i controlli cliccati).
+
+**File:** `src/engine/perceive.mjs` (due liste main-first, keep-chrome dei controlli JS,
+flag `chrome`, riuso id), `src/engine/reveal.mjs` (`revealPriority` penalità chrome),
+`test/reveal-loop.test.mjs`.
+
+---
+
+## #29 — Reveal "compatto ma strutturato" + record fedele per-stato
+**Effetto:** precisione output — nessuna perdita di struttura/contesto tra stati · **Sforzo:** Medio · **Stato:** ✅ FATTO (2026-07-04)
+
+**Problema (feedback utente).** Quando un click cambia solo una parte della pagina, il
+`BlockAccumulator` fondeva tutti gli stati in un unico elenco deduplicato. Sul caso
+`A,b,c → A,b,d → r,b,d` l'output diventava `A, b, c, d, r`: `d` ed `r` **orfani**, persa la
+co-occorrenza (cosa stava insieme sullo schermo), e — peggio — lo snapshot dello stato
+veniva **buttato al merge**, quindi "stato 3 = r,b,d" non era ricostruibile **nemmeno dopo**
+(contro regola #1 mai perdere / #3 Fase 1 verbatim). Scelta utente (AskUserQuestion): vista
+di default **"compatta ma strutturata"** — cornice condivisa una volta, frammenti che
+cambiano raggruppati per stato ed etichettati — **più** gli stati interi salvati a parte.
+
+**Fix (deterministico, zero AI, dentro il `BlockAccumulator`).**
+- **Ritenzione degli stati**: `add()` non fonde più incrementalmente — salva il testo di
+  ogni blocco una volta (`store`) e **pusha lo snapshot ordinato** di ogni cattura
+  (`_states`). Ritorna ancora il conteggio dei blocchi mai visti (`added` per la loop di
+  reveal invariato). Vista e record sono **derivati a read-time**.
+- **`toMarkdown()` compatto-strutturato**: `frame` = blocchi presenti in OGNI stato VARIANTE
+  (mutuo-esclusivo, ha nascosto un blocco del baseline) + baseline → cornice una volta. Ogni
+  stato variante emette i suoi blocchi non-frame come **UN gruppo contiguo etichettato**
+  (`**label:**`), ripetendo il contesto condiviso (è ciò che dà senso a `d`/`r`). Gli stati
+  **ACCRETIVI** (load-more/accordion che solo AGGIUNGE — non nasconde nulla) contribuiscono
+  solo i blocchi first-seen, una volta: **niente blow-up del load-more** (il difetto reale
+  del modello a intersezione pura, corretto qui). Ancoraggio + salto ancore deboli (`---`) +
+  ordinamento per `order` = generalizza #24/#27 (tab/viste app invariati).
+- **`states()` — record FEDELE per-stato**: ogni snapshot ricostruito verbatim dallo store.
+  Esposto su `revealAll` → `page.states` (solo se >1 stato) → scritto su disco in
+  `states/<pagina>.md` (una sezione `## State: <label>` per stato) via `assembleStates`
+  (layout.mjs/output.mjs). Fuori dal manifest; layout di default invariato quando non ci
+  sono pagine multi-stato.
+
+**Verificato:** 220 test offline verdi (5 nuovi: esempio esatto `A,b,c/A,b,d/r,b,d` →
+frame `b` una volta + gruppi etichettati; `states()` ritorna i 3 snapshot interi; load-more
+a 3 stati senza duplicati; `assembleStates` scrive solo pagine multi-stato / verbatim). I
+test esistenti di #24/#27 (tab adiacenti, order, ancora debole, load-more) passano
+**invariati**. ⏳ Da confermare dal vivo su una pagina con tab/viste app (ispezionare il
+`.md` consolidato e i file `states/…`).
+
+**File:** `src/extract.mjs` (`BlockAccumulator`: `_states`/`store`, `add`, `_render`,
+`toMarkdown`, `states`), `src/engine/reveal.mjs` (ritorna `states`), `src/engine/crawl-page.mjs`
+(`page.states`), `src/lib/layout.mjs` (`assembleStates`), `src/lib/output.mjs` +
+`src/lib/runs.mjs` (scrittura `states/`), `index.d.ts` (`RevealState`, `Page.states`),
+`test/extract.test.mjs` + `test/layout.test.mjs`.
+
 ---
 
 ## Riferimenti (ricerca)
@@ -1701,7 +1852,21 @@ non-heading è byte-identico — regola #1).
 
 ---
 
-_Ultimo aggiornamento: 2026-07-04 — #26 recupero heading per peso visivo FATTO:
+_Ultimo aggiornamento: 2026-07-04 — #29 reveal "compatto ma strutturato" + record
+fedele per-stato FATTO: il `BlockAccumulator` non fonde più gli stati in un elenco
+piatto (che orfanava `d`/`r` e buttava lo snapshot). Ora conserva ogni stato,
+`toMarkdown` rende la cornice condivisa una volta + i frammenti che cambiano
+raggruppati ed etichettati per stato (accretive/load-more senza duplicati), e
+`states()` espone il record FEDELE per-stato (verbatim) scritto su disco in
+`states/<pagina>.md`. Deterministico, zero AI, #24/#27 invariati (220 test verdi).
+In precedenza, stesso giorno: #28 copertura totale dei cliccabili FATTO:
+i controlli JS della site chrome (nav/header/footer) — un SPA top-nav o app rail
+che scambia la vista senza URL, "prima mancava il nav" — sono ora percepiti
+(perceive scandaglia il body dopo il main, main-first) e cliccati, restando
+UNIVERSALE e identico in `--no-ai`; il contenuto prende sempre il budget per primo
+(penalità `chrome` in `revealPriority`), i `<a href>` di nav restano link, e il
+riuso id consent↔revealer evita di rompere la dismissione cookie (215 test verdi).
+In precedenza, stesso giorno: #26 recupero heading per peso visivo FATTO:
 i titoli che le app marcano solo VISIVAMENTE (card/sezioni con font più grande o
 bold, mai `<h*>`) diventano `##`/`###`/`####` deterministicamente — marcatura
 in-browser (computed styles, atomica con data-sagecrawl-hidden in captureHtml) +

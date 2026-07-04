@@ -46,14 +46,19 @@ export const RESIDUAL_WARN_CHARS = 1200;
  * mechanical proof there is something to open; a measured hidden payload
  * likewise (weighted by size); a specific kind (tab/expander/dropdown/loadmore)
  * beats the generic 'control'; the label heuristic is only a last-place hint
- * (English-biased, no longer load-bearing). Pure; exported for the tests.
+ * (English-biased, no longer load-bearing). A `chrome` control — a JS switcher in
+ * the site nav/header/footer, now surfaced so nothing clickable is missed —
+ * carries a penalty so the MAIN CONTENT always gets the budget first; chrome only
+ * leapfrogs it on HARD measured proof (a real payload / closed disclosure), never
+ * on a kind/label hint alone. Pure; exported for the tests.
  */
 export function revealPriority(c) {
   return (
     (c.expanded === 'false' ? 4 : 0) +
     ((c.hiddenPayload || 0) > 0 ? 2 + Math.min(1, (c.hiddenPayload || 0) / 2000) : 0) +
     (c.kind && c.kind !== 'control' ? 1 : 0) +
-    (c.heuristic ? 0.5 : 0)
+    (c.heuristic ? 0.5 : 0) -
+    (c.chrome ? 1 : 0)
   );
 }
 
@@ -163,10 +168,14 @@ export async function revealAll(page, ctx, url, task) {
   // `label` is the tab-variant marker (toMarkdown); `provenance` is the richer
   // reveal source carried to the layout router so tasks like "the dropdown
   // results → dropdown.md" can route by HOW a block was surfaced.
-  const capture = async (label, provenance = 'baseline') => {
+  // `order` (#27) is the revealing control's vertical position in the page — it
+  // sorts mutually-exclusive reveal states into REPRESENTATION order in the
+  // output (the app's nav rail order), instead of the order they were clicked.
+  // Baseline and lazy-scroll captures pass 0 (the skeleton comes first).
+  const capture = async (label, provenance = 'baseline', order = 0) => {
     const html = await captureHtml();
     const { markdown } = extractMarkdown(html, { baseUrl: page.url() });
-    return acc.add(markdown, { label, provenance });
+    return acc.add(markdown, { label, provenance, order });
   };
 
   // AI-driven discovery: let the model read the candidate controls and decide
@@ -405,7 +414,7 @@ export async function revealAll(page, ctx, url, task) {
           navLinks.add(res.navigatedTo);
           break;
         }
-        const added = await capture(undefined, 'loadmore');
+        const added = await capture(undefined, 'loadmore', next.top || 0);
         ctx.emit({ type: 'action', url, action: 'click', detail: `load more — ${next.label}` });
         if (!added) break;
       }
@@ -431,7 +440,7 @@ export async function revealAll(page, ctx, url, task) {
         ? next.label
         : undefined;
     const provenance = next.label ? `${next.kind}:${next.label}` : next.kind;
-    const added = await capture(label, provenance);
+    const added = await capture(label, provenance, next.top || 0);
 
     // Classify the effect by comparing siblings + state fingerprint before/after.
     const after = await perceive(page);
@@ -518,7 +527,7 @@ export async function revealAll(page, ctx, url, task) {
             navLinks.add(res2.navigatedTo);
             break;
           }
-          const more = await capture(label, provenance);
+          const more = await capture(label, provenance, next.top || 0);
           if (!more) break;
           ctx.emit({ type: 'action', url, action: 'click', detail: `load more (measured): ${next.label || '(unlabelled)'} (+${more})` });
         }
@@ -628,6 +637,10 @@ export async function revealAll(page, ctx, url, task) {
   return {
     markdown: acc.toMarkdown(),
     blocks: acc.toBlocks(), // raw { text, provenance } in capture order, for layout
+    // The FAITHFUL per-state record: every captured state, whole and verbatim. The
+    // consolidated markdown is compact (shared frame once); this keeps each state's
+    // full co-occurrence recoverable, so a partial change never loses its structure.
+    states: acc.states(),
     title,
     links,
     navLinks: [...navLinks],

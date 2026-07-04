@@ -314,6 +314,52 @@ test('BlockAccumulator still APPENDS truly-appended content (load-more: nothing 
   assert.ok(md.indexOf('Item one.') < md.indexOf('Item two.'), 'appended content stays in reading order');
 });
 
+test('load-more over THREE states never duplicates an item (accretive: each new block once)', () => {
+  const acc = new BlockAccumulator();
+  acc.add('Intro.\n\nItem one.');
+  acc.add('Intro.\n\nItem one.\n\nItem two.', { provenance: 'loadmore' });
+  acc.add('Intro.\n\nItem one.\n\nItem two.\n\nItem three.', { provenance: 'loadmore' });
+  const md = acc.toMarkdown();
+  for (const [item, n] of [['Item one.', 1], ['Item two.', 1], ['Item three.', 1]]) {
+    assert.equal(md.split(item).length - 1, n, `${item} appears exactly once (accretive, not repeated per state)`);
+  }
+  assert.ok(md.indexOf('Item one.') < md.indexOf('Item two.') && md.indexOf('Item two.') < md.indexOf('Item three.'), 'reading order kept');
+});
+
+test('compact-but-structured: a partial change keeps each state WHOLE, frame shared once (A,b,c → A,b,d → r,b,d)', () => {
+  // The user's case: mutually-exclusive partial changes. `d`/`r` must NOT be
+  // orphaned into a flat A,b,c,d,r — each state's changing context is grouped and
+  // labelled; only the block present in EVERY state (BBB) is the shared frame.
+  const acc = new BlockAccumulator();
+  acc.add('AAA\n\nBBB\n\nCCC'); // state 1 (baseline)
+  acc.add('AAA\n\nBBB\n\nDDD', { label: 'S2', provenance: 'control:S2', order: 100 }); // c → d
+  acc.add('RRR\n\nBBB\n\nDDD', { label: 'S3', provenance: 'control:S3', order: 200 }); // A → r
+  const md = acc.toMarkdown();
+  const count = (s) => md.split(s).length - 1;
+  assert.equal(count('BBB'), 1, 'the shared frame (present in ALL states) appears once');
+  assert.ok(md.includes('**S2:**') && md.includes('**S3:**'), 'each changing state is labelled, never orphaned');
+  assert.equal(count('AAA'), 2, 'AAA stays in the two states that show it (base + S2)');
+  assert.equal(count('DDD'), 2, 'DDD stays in both states that show it (S2 + S3)');
+  const s2 = md.indexOf('**S2:**');
+  const s3 = md.indexOf('**S3:**');
+  assert.ok(md.slice(s2, s3).includes('AAA') && md.slice(s2, s3).includes('DDD'), 'S2 shows its full context (A·d) together');
+  assert.ok(md.slice(s3).includes('RRR') && md.slice(s3).includes('DDD'), 'S3 shows its full context (r·d) together');
+});
+
+test('states() is the FAITHFUL per-state record — every snapshot whole and verbatim', () => {
+  const acc = new BlockAccumulator();
+  acc.add('AAA\n\nBBB\n\nCCC');
+  acc.add('AAA\n\nBBB\n\nDDD', { label: 'S2', provenance: 'control:S2', order: 100 });
+  acc.add('RRR\n\nBBB\n\nDDD', { label: 'S3', provenance: 'control:S3', order: 200 });
+  const snaps = acc.states();
+  assert.equal(snaps.length, 3, 'one record per captured state — nothing lost at merge time');
+  assert.equal(snaps[0].markdown, 'AAA\n\nBBB\n\nCCC', 'state 1 whole');
+  assert.equal(snaps[1].markdown, 'AAA\n\nBBB\n\nDDD', 'state 2 whole (A,b,d — not just the delta d)');
+  assert.equal(snaps[2].markdown, 'RRR\n\nBBB\n\nDDD', 'state 3 whole (r,b,d)');
+  assert.equal(snaps[1].label, 'S2');
+  assert.equal(snaps[2].provenance, 'control:S3');
+});
+
 // --- #26: visual headings — the .md keeps the skeleton the page painted -----
 // Node path: inline styles stand in for computed styles (the browser twin in
 // engine/perceive.mjs is verified live, like #25).
@@ -435,4 +481,111 @@ test('#26 a wrapper block whose big text lives in an inline child is still caugh
   </main></body></html>`;
   const { markdown } = extractMarkdown(html);
   assert.ok(/^### Wrapped Title$/m.test(markdown), 'the block owning the line is marked, not the span');
+});
+
+test('#26 a big title in a NESTED wrapper inside a repeated tile stays a bullet (no `- #### …`)', () => {
+  // Regression: the marked node is a title-WRAPPER nested in the card, so a
+  // sibling-only check missed it and #25 flattened it to `- #### Misty Mountains`.
+  // The candidate must look at ANCESTORS: the tile is the repeated shaped row.
+  const tile = (name, date) =>
+    `<div class="tile"><div class="tt"><span style="font-size:22px;font-weight:700">${name}</span></div><div class="date">${date}</div></div>`;
+  const html = `<html><body><main>
+    <p>Gallery intro prose at the default body size to anchor the font histogram.</p>
+    <div class="gallery">
+      ${tile('Misty Mountains', '1st Dec')}
+      ${tile('Lake Reflection', '2nd Dec')}
+      ${tile('Forest Sunrise', '3rd Dec')}
+    </div>
+  </main></body></html>`;
+  const { markdown } = extractMarkdown(html);
+  assert.ok(!/#{2,6}\s/.test(markdown), `no heading marker may survive inside a flattened tile — got:\n${markdown}`);
+  assert.ok(/^- .*Misty Mountains/m.test(markdown), 'each tile is one clean bullet');
+});
+
+test('#26 a big stat-card VALUE with a unit letter (24.5K) never leaks a mid-line ###', () => {
+  const card = (label, value) =>
+    `<div class="stat"><div class="lbl">${label}</div><div class="val"><span style="font-size:28px;font-weight:700">${value}</span></div></div>`;
+  const html = `<html><body><main>
+    <p>Analytics intro prose at the default body size to anchor the histogram here.</p>
+    <div class="stats">
+      ${card('Page Views', '24.5K')}
+      ${card('Visitors', '8,234')}
+      ${card('Avg. Duration', '3m 24s')}
+    </div>
+  </main></body></html>`;
+  const { markdown } = extractMarkdown(html);
+  assert.ok(markdown.includes('24.5K') && markdown.includes('3m 24s'), 'the values survive');
+  assert.ok(!/#{2,6}/.test(markdown), `stat-card values are data, never headings — got:\n${markdown}`);
+});
+
+// --- #27: representation order — reveal states in page order, base first ----
+
+test('#27 mutually-exclusive views sharing one anchor land in page order (base first), not click order', () => {
+  // An embedded app: Dashboard/Analytics/Chat/Settings all render in the same
+  // panel, so every view anchors to the SAME following block (Sponsors). `order`
+  // is each nav item's vertical position (rail: Dashboard top → Settings bottom).
+  // Dashboard is captured LAST here (revisited after the others) but has the
+  // smallest order, so it must jump to the front of the slot.
+  const state = (body) => `Gallery header.\n\n${body}\n\nSponsors footer.`;
+  const acc = new BlockAccumulator();
+  acc.add(state('Placeholder.'));                                                  // baseline skeleton, order 0
+  acc.add(state('Analytics view.'), { label: 'Analytics', provenance: 'control:Analytics', order: 200 });
+  acc.add(state('Chat view.'), { label: 'Chat', provenance: 'control:Chat', order: 300 });
+  acc.add(state('Settings view.'), { label: 'Settings', provenance: 'control:Settings', order: 400 });
+  acc.add(state('Dashboard view.'), { label: 'Dashboard', provenance: 'control:Dashboard', order: 100 });
+  const md = acc.toMarkdown();
+  const order = ['Gallery header', 'Dashboard view', 'Analytics view', 'Chat view', 'Settings view', 'Sponsors footer'];
+  let last = -1;
+  for (const s of order) {
+    const i = md.indexOf(s);
+    assert.ok(i > last, `"${s}" out of representation order — got:\n${md}`);
+    last = i;
+  }
+});
+
+test('#27 a reveal state whose only following block is a frame divider anchors PAST it (base stays first)', () => {
+  // The vuetify case in miniature: the default view content sits below a `---`
+  // divider; a swapped-in view is followed by the SAME divider (an app-frame rule
+  // that recurs in every view). Anchoring to the divider would drop the revealed
+  // view ABOVE the base content — skipping the weak anchor keeps base-view-first.
+  const acc = new BlockAccumulator();
+  acc.add('Header.\n\n---\n\nBase view content.\n\nSponsors footer.');
+  acc.add('Header.\n\nRevealed view content.\n\n---\n\nSponsors footer.', { order: 500 });
+  const md = acc.toMarkdown();
+  assert.ok(
+    md.indexOf('Base view content.') < md.indexOf('Revealed view content.'),
+    `the base view must stay before the revealed view — got:\n${md}`,
+  );
+  assert.ok(
+    md.indexOf('Revealed view content.') < md.indexOf('Sponsors footer.'),
+    'the revealed view still lands before the distinctive footer',
+  );
+});
+
+test('#27 a multi-block view stays contiguous and in reading order within its slot', () => {
+  const acc = new BlockAccumulator();
+  acc.add('Head.\n\nTail.');
+  acc.add('Head.\n\nAlpha one.\n\nAlpha two.\n\nTail.', { order: 150 });
+  const md = acc.toMarkdown();
+  assert.ok(md.indexOf('Head.') < md.indexOf('Alpha one.'), 'group sits after the shared head');
+  assert.ok(md.indexOf('Alpha one.') < md.indexOf('Alpha two.'), 'reading order kept inside the group');
+  assert.ok(md.indexOf('Alpha two.') < md.indexOf('Tail.'), 'group sits before the shared tail');
+});
+
+test('#27 order 0 everywhere preserves the legacy click-order merge (tabs unaffected)', () => {
+  // Same as the tab-variant test but asserted explicitly: with no positional
+  // order the merge is byte-for-byte the old anchored behaviour.
+  const state = (cmd) => `Intro.\n\n${cmd}\n\nOutro.`;
+  const acc = new BlockAccumulator();
+  acc.add(state('pnpm x'));
+  acc.add(state('yarn x'), { label: 'yarn', provenance: 'tab:yarn' });
+  acc.add(state('npm x'), { label: 'npm', provenance: 'tab:npm' });
+  const md = acc.toMarkdown();
+  const order = ['pnpm x', 'yarn x', 'npm x', 'Outro.'];
+  let last = -1;
+  for (const s of order) {
+    const i = md.indexOf(s, last + 1);
+    assert.ok(i > last, `"${s}" not in click order — got:\n${md}`);
+    last = i;
+  }
 });

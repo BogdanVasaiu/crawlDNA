@@ -185,11 +185,29 @@ export interface PageMeta {
   revealResidualChars?: number;
 }
 
+/** One captured reveal state, whole and verbatim — the faithful per-state record.
+ *  The consolidated `markdown` is compact (shared frame once); this keeps each
+ *  state's full co-occurrence recoverable (e.g. a tab/view swap, a partial change). */
+export interface RevealState {
+  /** The state's variant marker (e.g. a tab/view label), or null for the base state. */
+  label: string | null;
+  /** How the state was surfaced: `"baseline"`/`"tab:…"`/`"expander:…"`/`"dropdown:…"`/`"loadmore"`. */
+  provenance: string;
+  /** The revealing control's vertical position (#27), used to order states. */
+  order: number;
+  /** The whole state's Markdown, verbatim. */
+  markdown: string;
+}
+
 export interface Page {
   url: string;
   task: string;
   title: string;
   markdown: string;
+  /** The faithful per-state reveal record — present only when a page's reveal
+   *  captured MORE THAN ONE state (else the single state IS `markdown`). Also
+   *  written to disk under `states/<page>.md` when the run is saved. */
+  states?: RevealState[];
   meta: PageMeta;
 }
 

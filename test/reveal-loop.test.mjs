@@ -104,6 +104,19 @@ test('revealPriority: closed disclosure > measured payload > specific kind > lab
   assert.deepEqual(order.map((c) => c.id), [0, 1, 2, 3, 4]);
 });
 
+test('revealPriority: a chrome control ranks below its content twin, but hard measured proof still wins', () => {
+  // A site-nav switcher (chrome) must not leapfrog main content on a kind hint alone.
+  const contentTab = rev(0, { kind: 'tab' });
+  const chromeTab = rev(1, { kind: 'tab', chrome: true });
+  const order = [chromeTab, contentTab].sort((a, b) => revealPriority(b) - revealPriority(a));
+  assert.deepEqual(order.map((c) => c.id), [0, 1], 'the content tab outranks the identical chrome tab');
+  // …but a chrome control with a real MEASURED payload still earns the budget over
+  // a bare content control — coverage is never sacrificed to the content-first rule.
+  const chromePayload = rev(2, { chrome: true, hiddenPayload: 1900 });
+  const contentPlain = rev(3);
+  assert.ok(revealPriority(chromePayload) > revealPriority(contentPlain), 'measured chrome payload beats a bare content control');
+});
+
 // --- (c) behavioural load-more: language-free saturation ----------------------
 
 test('a control that ADDS content and persists is re-clicked to saturation — no English label needed', async () => {
@@ -174,6 +187,38 @@ test('no-AI clicks a listener-only control with measured payload FIRST (the "Ser
   assert.ok(out.markdown.includes('Servizi comunali'), 'the payload behind the listener-only control is captured');
   assert.equal(model.clicked[0], 1, 'the measured payload outranks the generic sibling for the budget');
   assert.ok(model.clicked.includes(2), 'no-AI approves every mechanical candidate (a wasted click beats lost content)');
+});
+
+// --- (b) no-AI: a chrome view-switcher is covered, content still goes first ----
+
+test('no-AI covers a chrome view-switcher too, but clicks the content control first', async () => {
+  const model = {
+    paragraphs: ['Base intro: the visible starting text of this fake page, nothing hidden yet.'],
+    clicked: [],
+    residual: 0,
+    scrollHeight: () => 1000,
+    perceive() {
+      // A content control and a site-nav (chrome) switcher, both plain 'control'
+      // with no measured payload — so ONLY the chrome penalty separates them.
+      return pagePerception(model, [
+        rev(1, { label: 'Contenuto principale' }),
+        rev(2, { label: 'Voce di nav', chrome: true }),
+      ]);
+    },
+    html: () => htmlOf(model),
+    click(id) {
+      model.clicked.push(id);
+      if (id === 1) model.paragraphs.push('Contenuto rivelato: testo reale del corpo della pagina.');
+      if (id === 2) model.paragraphs.push('Vista di nav: una sezione aperta da un controllo nella chrome.');
+    },
+  };
+  const events = [];
+  const out = await revealAll(makePage(model), baseCtx(NONE, events), 'https://fake.site/page', 'estrai tutto');
+
+  assert.equal(model.clicked[0], 1, 'the content control gets the budget before the chrome one');
+  assert.ok(model.clicked.includes(2), 'the chrome view-switcher is still covered — nothing clickable is missed');
+  assert.ok(out.markdown.includes('Contenuto rivelato'), 'the content reveal is captured');
+  assert.ok(out.markdown.includes('Vista di nav'), 'the chrome reveal is captured');
 });
 
 // --- (b) AI mode: measurement arbitrates the judge ----------------------------

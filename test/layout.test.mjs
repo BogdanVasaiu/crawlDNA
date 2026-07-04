@@ -2,7 +2,7 @@
 // per-document packaging (#10) — union of bodies must equal the kept pages.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assembleScan, assemblePerDocument, extractHeadings } from '../src/lib/layout.mjs';
+import { assembleScan, assemblePerDocument, assembleStates, extractHeadings } from '../src/lib/layout.mjs';
 
 const pages = [
   {
@@ -55,6 +55,32 @@ test('assembleScan: single page gets no per-page header', () => {
   const files = assembleScan({ task: 'x', pages: [pages[0]] });
   assert.ok(!files[0].markdown.includes('_Source:'));
   assert.ok(files[0].markdown.includes('# Intro'));
+});
+
+test('assembleStates: only multi-state pages get a file, with every snapshot whole and verbatim', () => {
+  const multi = {
+    url: 'https://ex.com/app',
+    title: 'App',
+    markdown: 'AAA\n\nBBB', // compact consolidated
+    meta: { fetchedAt: '2026-07-04T00:00:00.000Z' },
+    states: [
+      { label: null, provenance: 'baseline', order: 0, markdown: 'AAA\n\nBBB\n\nCCC' },
+      { label: 'Analytics', provenance: 'control:Analytics', order: 100, markdown: 'AAA\n\nBBB\n\nDDD' },
+    ],
+  };
+  const single = { url: 'https://ex.com/plain', title: 'Plain', markdown: 'Just prose.', meta: {} }; // no states
+  const out = assembleStates({ pages: [multi, single] });
+  assert.equal(out.files.length, 1, 'only the multi-state page yields a states file');
+  const f = out.files[0];
+  assert.equal(f.filename, 'app.md', 'stable URL-derived id');
+  assert.ok(f.markdown.startsWith('---\n'), 'carries front-matter');
+  assert.ok(f.markdown.includes('## State: base') && f.markdown.includes('## State: Analytics'), 'one section per state, labelled');
+  assert.ok(f.markdown.includes('AAA\n\nBBB\n\nCCC') && f.markdown.includes('AAA\n\nBBB\n\nDDD'), 'each snapshot is WHOLE and verbatim');
+});
+
+test('assembleStates: no multi-state pages → no files', () => {
+  assert.deepEqual(assembleStates({ pages: [{ url: 'https://ex.com/x', markdown: 'x', meta: {} }] }), { files: [] });
+  assert.deepEqual(assembleStates({ pages: [] }), { files: [] });
 });
 
 test('assemblePerDocument: verbatim per-page bodies, stable ids, index + valid JSONL', () => {

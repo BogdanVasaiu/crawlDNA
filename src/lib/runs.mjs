@@ -320,6 +320,7 @@ export async function saveRun({
       files: scan.files || [],
       manifest: buildScanManifest(scan),
       documents: scan._docBundle || null,
+      states: scan._statesBundle || null,
     });
   }
 

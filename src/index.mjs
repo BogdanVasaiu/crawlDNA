@@ -11,7 +11,7 @@
 import { createHash } from 'node:crypto';
 import { runDocsProfile } from './profiles/docs.mjs';
 import { crawlPageWithEngine } from './engine/crawl-page.mjs';
-import { assembleScan, assemblePerDocument } from './lib/layout.mjs';
+import { assembleScan, assemblePerDocument, assembleStates } from './lib/layout.mjs';
 import { saveRun, scanIdFor, initRun, appendJournal, loadRunForResume, cacheRoot } from './lib/runs.mjs';
 import { retainBrowser, releaseBrowser, configureContextPool } from './lib/browser.mjs';
 import { normalizeUrl, inScope, pathOf, originOf, hostOf, siblingKey } from './lib/url.mjs';
@@ -635,6 +635,12 @@ export function crawlDocs(targets, options = {}) {
             // filtering or reshaping happens here — that is Phase 2 ("reshape", the
             // chat over these saved files). The crawl stays faithful by construction.
             scan.files = assembleScan({ task: scan.task, pages: scan.pages });
+            // The faithful per-state record: for any page whose reveal captured >1
+            // state, write its whole snapshots verbatim under states/. Pure extra
+            // files (never touches the consolidated .md or the manifest); empty when
+            // no page had a multi-state reveal, so the default layout is unchanged.
+            const statesBundle = assembleStates({ pages: scan.pages });
+            if (statesBundle.files.length) scan._statesBundle = statesBundle;
             // #10 (opt-in): ALSO package one identifiable document per page (+ index +
             // JSONL). Pure repackaging of the SAME pages — the consolidated .md above is
             // unchanged and no content is lost. `_docBundle` carries the files to save.

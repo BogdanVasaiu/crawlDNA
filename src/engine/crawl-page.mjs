@@ -423,6 +423,11 @@ export async function crawlPageWithEngine(target, ctx) {
       title,
       markdown,
       blocks,
+      // The faithful per-state record (BlockAccumulator.states()): every captured
+      // reveal state, whole and verbatim. Attached ONLY when a reveal produced more
+      // than one state — a single-state page's one snapshot IS its consolidated
+      // markdown, so there is nothing extra to keep. Written to disk under states/.
+      states: Array.isArray(revealed.states) && revealed.states.length > 1 ? revealed.states : undefined,
       // #21d — the reveal exit audit, per page and machine-readable: how many
       // characters of text were STILL hidden in the main content when the
       // reveal loop ended (0 = measured drain). Travels into the manifest and

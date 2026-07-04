@@ -1,7 +1,10 @@
-// Behaviour-aware perception. Casts a wide net for anything in the MAIN CONTENT
-// that could hide content (tabs/accordions/"load more"/JS widgets) — but ignores
-// site chrome (nav/header/footer/menus) so the reveal budget is spent on content,
-// not on flailing through global navigation. Also surfaces in-content links,
+// Behaviour-aware perception. Casts a wide net for anything that could hide
+// content (tabs/accordions/"load more"/JS widgets). It scans the MAIN CONTENT
+// first, then the site chrome (nav/header/footer) for its JS view-switchers — an
+// SPA nav or app rail that swaps the view WITHOUT a URL — so no clickable that
+// surfaces content is ever missed; the main content still gets the budget first
+// (a chrome penalty in revealPriority). Plain <a href> nav stays a LINK (crawled
+// as its own page), never an in-page revealer. Also surfaces in-content links,
 // route candidates mined from page scripts, and one-time consent dismissals.
 
 import { createHash } from 'node:crypto';
@@ -170,9 +173,20 @@ export async function perceive(page, { maxText = 2500, maxRevealers = 150, maxLi
         rid++;
       }
 
-      // ---- revealers, scoped to the main content --------------------------
+      // ---- revealers: main content FIRST, then the rest of the page -------
+      // Two lists over the SAME gauntlet, concatenated main-first. Pass 1 (main)
+      // therefore wins the candidate cap (maxRevealers) and — via the chrome
+      // penalty in revealPriority — the ACTION budget. Pass 2 (the whole body)
+      // sweeps site chrome (nav/header/footer) for its JS view-switchers: an SPA
+      // top-nav or app rail whose buttons swap the main view without a URL used to
+      // be dropped entirely (it lives outside `mainEl` AND trips isChrome), so
+      // every non-default view was silently lost (rule #1 — "prima mancava il
+      // nav"). `considered` dedups the overlap, so main is processed once, first.
       const realMain = mainEl !== document.body;
-      for (const el of mainEl.querySelectorAll(candidateSel)) {
+      const candidates = realMain
+        ? [...mainEl.querySelectorAll(candidateSel), ...document.body.querySelectorAll(candidateSel)]
+        : [...document.body.querySelectorAll(candidateSel)];
+      for (const el of candidates) {
         if (revealers.length >= maxRevealers) break;
         if (considered.has(el)) continue;
         considered.add(el);
@@ -185,23 +199,37 @@ export async function perceive(page, { maxText = 2500, maxRevealers = 150, maxLi
         const style = getComputedStyle(el);
         const href = el.getAttribute('href') || '';
         const hasListener = el.hasAttribute('data-sagecrawl-listener') || el.hasAttribute('onclick');
+        const ariaExpanded = el.getAttribute('aria-expanded');
+        const ariaControls = el.getAttribute('aria-controls') || '';
+        const ariaSelected = el.getAttribute('aria-selected');
+        const ariaPressed = el.getAttribute('aria-pressed');
 
-        // A landmark (<nav>/<aside>/[role=navigation]…) marks SITE chrome — but
-        // only relative to the page. When the main container is REAL (not the
-        // <body> fallback), a landmark NESTED INSIDE IT belongs to the content:
-        // an embedded app's own drawer/rail (a dashboard demo's Dashboard/
-        // Analytics/Chat nav) is how that app switches views, and skipping it
-        // silently loses every non-default view (rule #1). So inside a real main
-        // container a JS CONTROL — sniffed listener or an interactive tag/role,
-        // never a plain <a>, which stays a link for the gate — survives the
-        // chrome check. With the <body> fallback the landmark rule stays
-        // authoritative (there, nav really is the site's own).
+        // A JS CONTROL: a sniffed listener or an interactive tag/role — never a
+        // plain <a> (that stays a link for the frontier gate). This is what may
+        // survive the chrome check below, wherever on the page it lives.
         const jsControl =
           tag !== 'a' &&
           (hasListener ||
             ['button', 'summary', 'select', 'details'].includes(tag) ||
             ['button', 'tab', 'switch', 'option', 'checkbox', 'combobox', 'menuitemradio'].includes(role));
-        if (isChrome(el) && !(realMain && jsControl)) continue;
+
+        // SITE CHROME. isChrome walks to <body>; an element NESTED in a REAL main
+        // container sits under a landmark that is really app content (an embedded
+        // app's own rail — #25), NOT site chrome. TRUE site chrome is what lies
+        // OUTSIDE the real main (or the whole page under the <body> fallback). We
+        // no longer drop it wholesale: a JS control (an SPA top-nav / app rail that
+        // swaps the view — "prima mancava il nav") or a MEASURED disclosure (a
+        // footer <details> FAQ) is kept and tagged `chrome`, so revealPriority
+        // spends the action budget on content first while nothing clickable that
+        // surfaces content is missed. main-internal keeps its exact #25 rule (a JS
+        // control only). Works with no model at all — the closed-loop guards
+        // (shape-muting, measured ordering) bound any chrome noise.
+        const nestedInMain = realMain && mainEl.contains(el);
+        const chrome = isChrome(el) && !nestedInMain;
+        if (isChrome(el)) {
+          const keep = nestedInMain ? jsControl : jsControl || ariaExpanded != null || !!ariaControls;
+          if (!keep) continue;
+        }
 
         // Skip DISABLED controls — clicking them reveals nothing, so they only burn
         // the action budget (e.g. a calendar's non-selectable days, a greyed-out
@@ -221,10 +249,6 @@ export async function perceive(page, { maxText = 2500, maxRevealers = 150, maxLi
         const hasNavHref = tag === 'a' && href && href !== '#' && !/^javascript:/i.test(href);
         if (hasNavHref) continue;
 
-        const ariaExpanded = el.getAttribute('aria-expanded');
-        const ariaControls = el.getAttribute('aria-controls') || '';
-        const ariaSelected = el.getAttribute('aria-selected');
-        const ariaPressed = el.getAttribute('aria-pressed');
         const pointer = style.cursor === 'pointer';
         const interactiveClass = INTERACTIVE_CLASS.test(cls);
 
@@ -281,9 +305,24 @@ export async function perceive(page, { maxText = 2500, maxRevealers = 150, maxLi
         const expanded = ariaExpanded; // raw aria-expanded value ('false' = closed disclosure)
 
         const signature = `${role}|${label}|${ariaControls}|${kind}`;
-        el.setAttribute('data-sagecrawl-id', String(rid));
-        revealers.push({ id: rid, kind, label, role, cls: cls.slice(0, 60), context: nearestHeading(el), heuristic, signature, hiddenPayload, expanded });
-        rid++;
+        // REUSE an id already stamped by the consent block above. Now that pass 2
+        // scans the whole page, a sticky-header / banner button can be BOTH a
+        // consentCandidate and a revealer; overwriting its id with a fresh rid
+        // would strand the consentCandidate reference and break dismissal. Consent
+        // ids [0,k) and revealer ids [k,…) share one counter and never collide, so
+        // a reused id stays unique. Unmarked → take (and stamp) the next fresh id.
+        const marked = el.getAttribute('data-sagecrawl-id');
+        const cid = marked != null ? Number(marked) : rid++;
+        if (marked == null) el.setAttribute('data-sagecrawl-id', String(cid));
+        // #27 — the control's ABSOLUTE vertical position in the page. It orders the
+        // reveal states in the output by REPRESENTATION (proximity to the base): an
+        // app's nav rail runs Dashboard→Analytics→Chat→Settings top-to-bottom, so
+        // the view each item opens lands in that order — not in the order the engine
+        // happened to click them. Horizontal tab strips share a `top`, so they keep
+        // their left-to-right discovery order (stable). Read once, here.
+        const rct = el.getBoundingClientRect();
+        const top = Math.round(rct.top + (window.scrollY || window.pageYOffset || 0));
+        revealers.push({ id: cid, kind, label, role, cls: cls.slice(0, 60), context: nearestHeading(el), heuristic, signature, hiddenPayload, expanded, top, chrome });
       }
 
       // ---- links: every destination on the page (nav/footer/app-bar included)
@@ -503,20 +542,38 @@ export function markVisualHeadings() {
     if (!/\p{L}/u.test(text)) continue; // bare numbers/prices are data, not titles
     if (el.closest(BANNED)) continue;
     if (el.querySelector(STRUCTURAL)) continue;
-    // Repeated same-shape siblings are DATA ROWS (#25 renders them as bullets),
-    // never titles: a transaction row with a bold name must not become an h4.
-    // Same shape signal as extract's shapedRowItem: tag + first class token.
-    const cls0 = ((el.getAttribute('class') || '').split(/\s+/)[0] || '');
-    if (cls0 && el.parentElement) {
+    // A title INSIDE a repeated row that #25 flattens to a bullet must not be
+    // marked (the marker would collapse into the bullet as a stray `- #### …`).
+    // The candidate is often a title-wrapper NESTED in the card, so test
+    // ANCESTORS, not just the element's own siblings: the 8 gallery tiles, the
+    // 4 stat cards and the colour swatches all sit one level up. Same shape
+    // signal as extract's shapedRowItem (tag + first class token, ≥3 siblings,
+    // short, no block content). Summary/Transactions/Recent Orders survive:
+    // their cards carry a table/list or have <3 same-shape siblings.
+    const firstCls = (n) => ((n.getAttribute && n.getAttribute('class')) || '').split(/\s+/)[0] || '';
+    const isFlattenedRow = (a) => {
+      if (!a || a === document.body) return false;
+      if ((a.getAttribute && a.getAttribute('role')) === 'listitem') return true;
+      if (a.tagName !== 'DIV') return false;
+      const c0 = firstCls(a);
+      if (!c0) return false;
+      const t = norm(a.textContent);
+      if (!t || t.length > 200) return false;
+      if (a.querySelector && a.querySelector('h1,h2,h3,h4,h5,h6,table,pre,ul,ol')) return false;
+      const par = a.parentElement;
+      if (!par) return false;
       let alike = 0;
-      for (const sib of el.parentElement.children) {
-        if (
-          sib.tagName === el.tagName &&
-          (((sib.getAttribute('class') || '').split(/\s+/)[0]) || '') === cls0
-        ) alike++;
+      for (const sib of par.children) if (sib.tagName === a.tagName && firstCls(sib) === c0) alike++;
+      return alike >= 3;
+    };
+    let inRow = false;
+    for (let a = el, hops = 0; a && a !== document.body && hops < 6; a = a.parentElement, hops++) {
+      if (isFlattenedRow(a)) {
+        inRow = true;
+        break;
       }
-      if (alike >= 3) continue;
     }
+    if (inRow) continue;
     const st = statsOf(el);
     if (!st.chars || st.maxSize < body) continue; // never smaller than the page body font
     if (st.minSize < 0.75 * st.maxSize) continue; // mixed sizes = composite (stat value + caption), not a title

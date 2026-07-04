@@ -17,9 +17,10 @@ import path from 'node:path';
  * @param {Array<{ filename: string, markdown: string }>} [bundle.files]
  * @param {object} bundle.manifest
  * @param {{ files?: Array<{filename,markdown}>, index?: {filename,markdown}, jsonl?: {filename,content} }} [bundle.documents]
+ * @param {{ files?: Array<{filename,markdown}> }} [bundle.states]  faithful per-state record (states/)
  * @returns {Promise<{ dir: string, manifestPath: string, files: number, documents: number }>}
  */
-export async function writeBundle(dir, { files = [], manifest, documents = null }) {
+export async function writeBundle(dir, { files = [], manifest, documents = null, states = null }) {
   const root = path.resolve(dir);
   await mkdir(root, { recursive: true });
 
@@ -44,6 +45,15 @@ export async function writeBundle(dir, { files = [], manifest, documents = null 
     }
     if (documents.jsonl) {
       await writeFile(path.join(root, path.basename(documents.jsonl.filename)), documents.jsonl.content, 'utf8');
+    }
+  }
+
+  // The faithful per-state record (reveal snapshots) — one .md per multi-state page.
+  if (states && states.files && states.files.length) {
+    const statesDir = path.join(root, 'states');
+    await mkdir(statesDir, { recursive: true });
+    for (const f of states.files) {
+      await writeFile(path.join(statesDir, path.basename(f.filename)), f.markdown, 'utf8');
     }
   }
 

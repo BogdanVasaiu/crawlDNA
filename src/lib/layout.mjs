@@ -230,3 +230,48 @@ export function assemblePerDocument({ task, pages }) {
 
   return { documents, files, index, jsonl };
 }
+
+/**
+ * Package the FAITHFUL per-state record for pages whose reveal captured MORE THAN ONE
+ * state (tabs, swapped views, partial changes). The consolidated .md is compact (the
+ * shared frame once); this writes each page's whole snapshots VERBATIM — one section
+ * per state under a `## State: <label>` marker — so the complete co-occurrence a
+ * partial change scatters (`state 3 = r,b,d`) is always recoverable on disk. Single-
+ * state pages don't qualify (their one state IS the consolidated page). Pure
+ * repackaging: nothing filtered or transformed. Written under `states/` (see
+ * output.mjs); never touches the manifest or the default consolidated output.
+ *
+ * @param {object} a
+ * @param {Array}  a.pages  result.pages — some carrying `states: [{label,provenance,order,markdown}]`
+ * @returns {{ files: Array<{filename: string, markdown: string}> }}
+ */
+export function assembleStates({ pages }) {
+  const all = (pages || []).filter((p) => Array.isArray(p.states) && p.states.length > 1);
+  if (all.length === 0) return { files: [] };
+
+  const usedIds = new Set();
+  const stableId = (url, i) => {
+    const p = pathOf(url || '');
+    const source = p && p !== '/' ? p : hostOf(url || '') || `page-${i + 1}`;
+    const base = slug(source) || `page-${i + 1}`;
+    let id = base;
+    let n = 2;
+    while (usedIds.has(id)) id = `${base}-${n++}`; // stable + unique within the scan
+    usedIds.add(id);
+    return id;
+  };
+
+  const files = [];
+  for (let i = 0; i < all.length; i++) {
+    const p = all[i];
+    const id = stableId(p.url || '', i);
+    const parts = [docFrontMatter({ url: p.url, title: (p.title || '').trim(), fetchedAt: (p.meta && p.meta.fetchedAt) || '' })];
+    parts.push(`> Faithful reveal record — ${p.states.length} captured states, each whole and verbatim.`);
+    p.states.forEach((s, k) => {
+      const name = s.label || (s.provenance && s.provenance !== 'baseline' ? s.provenance : k === 0 ? 'base' : `state ${k + 1}`);
+      parts.push(`## State: ${name}\n\n${String(s.markdown || '').trim()}`);
+    });
+    files.push({ filename: `${id}.md`, markdown: parts.join('\n\n') + '\n' });
+  }
+  return { files };
+}

@@ -87,32 +87,9 @@ function buildTurndown() {
   });
 
   // Role-LESS repeated rows: the same fix for app lists built from bare <div>s
-  // (transaction feeds, comment threads). The row signal is SHAPE, not a class
-  // name: ≥3 sibling divs sharing the same base class token, each a SHORT flat
-  // item (no headings/tables/fences/lists inside, not a table-cell fragment).
-  // Every guard is structural, so prose can never match (paragraphs are <p>,
-  // article sections differ in shape and carry block content).
-  const shapeToken = (n) => {
-    const cls = (n.getAttribute && n.getAttribute('class')) || '';
-    return `${n.nodeName}|${cls.split(/\s+/)[0] || ''}`;
-  };
-  const isShapedRow = (node) => {
-    if (node.nodeName !== 'DIV') return false;
-    const cls = (node.getAttribute && node.getAttribute('class')) || '';
-    if (!cls.trim()) return false;
-    const text = (node.textContent || '').replace(/\s+/g, ' ').trim();
-    if (!text || text.length > 200) return false;
-    if (node.querySelector && node.querySelector('h1,h2,h3,h4,h5,h6,table,pre,ul,ol')) return false;
-    for (let p = node.parentNode; p; p = p.parentNode) {
-      if (p.nodeName === 'TD' || p.nodeName === 'TH') return false;
-    }
-    const want = shapeToken(node);
-    let alike = 0;
-    for (const sib of node.parentNode ? node.parentNode.childNodes : []) {
-      if (sib.nodeType === 1 && shapeToken(sib) === want) alike++;
-    }
-    return alike >= 3;
-  };
+  // (transaction feeds, comment threads). Shared with markVisualHeadings below —
+  // see isShapedRow at module scope — so "a row that flattens to a bullet" has a
+  // SINGLE definition, and #26 never plants a heading marker inside one.
   td.addRule('shapedRowItem', {
     filter: isShapedRow,
     replacement: (content) => '\n- ' + inlineItem(content) + '\n',
@@ -178,6 +155,38 @@ function buildTurndown() {
 
 function textOf(node) {
   return (node && node.text ? node.text : '').replace(/\s+/g, ' ').trim();
+}
+
+// A row that gets FLATTENED to a single bullet (shapedRowItem): ≥3 sibling divs
+// sharing the same base class token, each a SHORT flat item (no headings/tables/
+// fences/lists inside, not a table-cell fragment). Structural, so prose never
+// matches. Shared by the shapedRowItem rule AND by markVisualHeadings, which must
+// never plant a heading marker inside such a row (#26): the marker would collapse
+// into the bullet as a stray `- #### …` / mid-line `###`.
+// Tag name that works on BOTH DOMs this file touches: Turndown's node (domino,
+// nodeName) inside the conversion rules, and node-html-parser (tagName, no
+// nodeName) inside markVisualHeadings. Both return an uppercase tag.
+const tagOf = (n) => (n && (n.tagName || n.nodeName)) || '';
+function shapeToken(n) {
+  const cls = (n.getAttribute && n.getAttribute('class')) || '';
+  return `${tagOf(n)}|${cls.split(/\s+/)[0] || ''}`;
+}
+function isShapedRow(node) {
+  if (!node || tagOf(node) !== 'DIV') return false;
+  const cls = (node.getAttribute && node.getAttribute('class')) || '';
+  if (!cls.trim()) return false;
+  const text = (node.textContent || '').replace(/\s+/g, ' ').trim();
+  if (!text || text.length > 200) return false;
+  if (node.querySelector && node.querySelector('h1,h2,h3,h4,h5,h6,table,pre,ul,ol')) return false;
+  for (let p = node.parentNode; p; p = p.parentNode) {
+    if (tagOf(p) === 'TD' || tagOf(p) === 'TH') return false;
+  }
+  const want = shapeToken(node);
+  let alike = 0;
+  for (const sib of node.parentNode ? node.parentNode.childNodes : []) {
+    if (sib.nodeType === 1 && shapeToken(sib) === want) alike++;
+  }
+  return alike >= 3;
 }
 
 /** Rewrite relative href/src to absolute so links survive extraction. */
@@ -338,6 +347,16 @@ function headingBannedAt(el) {
 
 const HEADING_STRUCTURAL = 'h1,h2,h3,h4,h5,h6,table,ul,ol,pre,blockquote,button,a,input,select,textarea';
 
+/** Is `el` (or one of its near ancestors) a row that gets flattened to a bullet?
+ *  If so, a heading marker planted here would collapse into the bullet. */
+function insideFlattenedRow(el) {
+  let hops = 0;
+  for (let a = el; a && a.getAttribute && hops < 6; a = a.parentNode, hops++) {
+    if (isShapedRow(a)) return true;
+  }
+  return false;
+}
+
 /** Stamp data-sagecrawl-heading="2|3|4" on inline-styled visual titles. Mutates
  *  the tree (attributes only — content untouched). Browser-stamped markers are
  *  respected, never re-done. */
@@ -352,21 +371,14 @@ function markVisualHeadings(content) {
     if (!/\p{L}/u.test(text)) continue; // bare numbers/prices are data, not titles
     if (headingBannedAt(el)) continue;
     if (el.querySelector(HEADING_STRUCTURAL)) continue;
-    // Repeated same-shape siblings are DATA ROWS (#25 renders them as bullets),
-    // never titles: a transaction row with a bold name must not become an h4.
-    // Same shape signal as shapedRowItem above: tag + first class token.
-    const cls0 = ((el.getAttribute('class') || '').split(/\s+/)[0] || '');
-    if (cls0 && el.parentNode) {
-      let alike = 0;
-      for (const sib of el.parentNode.childNodes) {
-        if (
-          sib.nodeType === 1 &&
-          sib.tagName === el.tagName &&
-          ((((sib.getAttribute && sib.getAttribute('class')) || '').split(/\s+/)[0]) || '') === cls0
-        ) alike++;
-      }
-      if (alike >= 3) continue;
-    }
+    // A title INSIDE a repeated row that #25 flattens to a bullet must not be
+    // marked: the marker would collapse into the bullet as a stray `- #### …`.
+    // The candidate is often a title-wrapper NESTED in the card, so we must test
+    // ANCESTORS (up to the block), not just the element's own siblings — the
+    // 8 gallery tiles, 4 stat cards and colour swatches all sit one level up.
+    // (Summary/Transactions/Recent Orders survive: their cards carry a table/list
+    // or have <3 same-shape siblings, so isShapedRow is false for them.)
+    if (insideFlattenedRow(el)) continue;
     const st = visualStats(el, null);
     if (!st.chars || st.maxSize < body) continue; // never smaller than the page body font
     if (st.minSize < 0.75 * st.maxSize) continue; // mixed sizes = composite block, not a title
@@ -830,6 +842,15 @@ export function applyExclusions(markdown, exclude = {}) {
  *  whole table/list re-enters the document on every state. Images with real alt
  *  text stay in the key (two cards may differ only by their pictures); a block
  *  that is ONLY an image keeps its full identity. */
+/** A block too generic to anchor a merge onto: a horizontal rule (`---`/`***`/
+ *  `___`) or a tiny stub. These recur identically in app frames, so they make
+ *  ambiguous anchors (#27). Content blocks — even short headings — are never weak. */
+function isWeakAnchor(text) {
+  const s = String(text || '').trim();
+  if (s.length <= 2) return true;
+  return /^([-*_=])\1{2,}$/.test(s.replace(/\s+/g, ''));
+}
+
 const normalizeBlock = (s) => {
   let t = s;
   // A TABLE's identity is its ROWS, not their order: clicking a sortable column
@@ -848,89 +869,173 @@ const normalizeBlock = (s) => {
 };
 
 /**
- * Accumulates unique content blocks seen across many page states (e.g. each tab
- * of a tab group, each expanded accordion). Shared content is de-duplicated;
- * first-seen order is preserved. Blocks revealed by a labelled control (a tab
- * variant) carry that label so provenance survives into the output.
+ * Records every page STATE captured across a reveal (each tab, each expanded
+ * accordion, each swapped view) as a full snapshot, and derives two views from
+ * them: `toMarkdown()` — the COMPACT-STRUCTURED consolidated document (the shared
+ * frame once, each state's changing blocks grouped under a `**label:**` marker,
+ * never orphaned) — and `states()` — the FAITHFUL per-state record (each whole
+ * snapshot verbatim). Nothing about a state is thrown away at capture time, so a
+ * partial change never loses its structure (the `A,b,c → A,b,d → r,b,d` case).
  */
 export class BlockAccumulator {
   constructor() {
-    this.seen = new Set();
-    this.blocks = []; // { key, text, label, provenance }
+    // Nothing about a state is discarded at add() time: every capture's FULL
+    // ordered block list is kept (`_states`), block text stored once (`store`),
+    // and both the compact-structured document (toMarkdown) and the faithful
+    // per-state record (states()) are DERIVED from it at read time. This is what
+    // lets a partial change keep its structure — "state 3 = r,b,d" stays whole.
+    this.seen = new Set(); // keys ever seen (drives add()'s new-block count)
+    this.store = new Map(); // key -> verbatim text (first-seen)
+    this.prov = new Map(); // key -> provenance of the state that first showed it
+    this._states = []; // { label, provenance, order, keys:[…] } per capture — a full snapshot
   }
 
   /**
-   * Merge the *new* blocks of `markdown` into the accumulated document IN PLACE:
-   * each new block is inserted right before the nearest FOLLOWING block the
-   * accumulator already holds — i.e. at its position in the new state's own
-   * reading order — falling back to append when nothing known follows it.
-   * Mutually-exclusive reveal states (framework tabs like pnpm/yarn/npm/bun)
-   * thus land beside the sibling they replace, in the section they belong to,
-   * instead of piling up at the end of the document detached from all context
-   * (appended content — load-more, lazy scroll — still ends up at the end,
-   * because nothing known follows it). Returns the count of new blocks.
+   * Record ONE captured page state (the full visible DOM after a click). Splits it
+   * into blocks, stores each block's verbatim text once (dedup by content key), and
+   * pushes the state's ORDERED key list — the whole snapshot, kept so structure is
+   * never lost (rule #1/#3). Returns the count of blocks NEVER SEEN before: the
+   * reveal loop reads this as `added` to drive load-more/futility/sticky, so its
+   * semantics are unchanged from the old accumulator.
    *
-   * `label` is the TAB-variant marker used by toMarkdown.
-   * `provenance` is the richer reveal source carried to the layout router
-   * (`baseline` / `tab:…` / `expander:…` / `dropdown:…` / `loadmore`).
+   * `label` is the state's variant marker (rendered as `**label:**`); `provenance`
+   * the reveal source (`baseline`/`tab:…`/`expander:…`/`dropdown:…`/`loadmore`);
+   * `order` (#27) the revealing control's vertical position, used to sort states
+   * that share an anchor into page order (base first). Placement + the shared-frame
+   * split are computed at READ time (toMarkdown), not here.
    */
-  add(markdown, { label, provenance } = {}) {
-    const texts = splitBlocks(markdown);
-    const n = texts.length;
-    const at = new Map(this.blocks.map((b, i) => [b.key, i]));
-    const keys = new Array(n);
-    const matched = new Array(n); // capture block -> its accumulator index, or -1 if new
-    for (let i = 0; i < n; i++) {
-      keys[i] = createHash('sha1').update(normalizeBlock(texts[i])).digest('hex');
-      matched[i] = at.has(keys[i]) ? at.get(keys[i]) : -1;
-    }
-    // Anchor scan (right to left): a new block inserts before the accumulator
-    // position of the next matched block in THIS capture.
-    const before = new Array(n);
-    let next = this.blocks.length;
-    for (let i = n - 1; i >= 0; i--) {
-      if (matched[i] >= 0) next = matched[i];
-      before[i] = next;
-    }
-    const inserts = new Map(); // accumulator index -> new blocks to insert before it
+  add(markdown, { label, provenance = 'baseline', order = 0 } = {}) {
+    const keys = [];
+    const inState = new Set();
     let added = 0;
-    for (let i = 0; i < n; i++) {
-      if (matched[i] >= 0 || this.seen.has(keys[i])) continue; // known, or dup within this capture
-      this.seen.add(keys[i]);
-      const blk = { key: keys[i], text: texts[i], label: label || null, provenance: provenance || 'baseline' };
-      const list = inserts.get(before[i]);
-      if (list) list.push(blk);
-      else inserts.set(before[i], [blk]);
-      added++;
-    }
-    if (added) {
-      const merged = [];
-      for (let i = 0; i <= this.blocks.length; i++) {
-        const ins = inserts.get(i);
-        if (ins) merged.push(...ins);
-        if (i < this.blocks.length) merged.push(this.blocks[i]);
+    for (const text of splitBlocks(markdown)) {
+      const key = createHash('sha1').update(normalizeBlock(text)).digest('hex');
+      if (inState.has(key)) continue; // a block repeated within one capture counts once
+      inState.add(key);
+      keys.push(key);
+      if (!this.seen.has(key)) {
+        this.seen.add(key);
+        this.store.set(key, text);
+        this.prov.set(key, provenance || 'baseline');
+        added++;
       }
-      this.blocks = merged;
     }
+    this._states.push({ label: label || null, provenance: provenance || 'baseline', order: order || 0, keys });
     return added;
   }
 
+  /**
+   * Compute the COMPACT-STRUCTURED document from the retained states:
+   * the shared frame once, then each state's changing blocks as ONE contiguous,
+   * labelled group anchored in its section. Returns [{ text, label, provenance }]
+   * in reading order. Pure; toMarkdown/toBlocks render from it.
+   */
+  _render() {
+    const states = this._states;
+    if (!states.length) return [];
+    const textOf = (k) => this.store.get(k);
+    // Single capture (a normal no-reveal page) → verbatim, unchanged.
+    if (states.length === 1) return states[0].keys.map((k) => ({ text: textOf(k), label: null, provenance: this.prov.get(k) }));
+
+    const base = states[0];
+    // firstState[key] = index of the earliest state that showed the block.
+    const firstState = new Map();
+    states.forEach((s, i) => s.keys.forEach((k) => { if (!firstState.has(k)) firstState.set(k, i); }));
+
+    // Classify each later state vs the baseline. VARIANT = it HID a baseline block
+    // (mutually-exclusive: a tab/view swap or a partial change) → its full changing
+    // context is shown, repeated, labelled, so `d`/`r` stay WITH their state.
+    // ACCRETIVE = it hid nothing (load-more, an accordion that only ADDS) → only its
+    // genuinely-new blocks, once, unlabelled (no load-more blow-up).
+    const isVariant = states.map((s, i) => {
+      if (i === 0) return false;
+      const set = new Set(s.keys);
+      return base.keys.some((k) => !set.has(k));
+    });
+
+    // FRAME = blocks in the baseline AND in EVERY variant state (the shared
+    // skeleton). Accretive-only additions are NOT frame — they become their own
+    // unlabelled groups, keeping their document position without repeating.
+    const frame = new Set(base.keys);
+    states.forEach((s, i) => {
+      if (!isVariant[i]) return;
+      const set = new Set(s.keys);
+      for (const k of [...frame]) if (!set.has(k)) frame.delete(k);
+    });
+
+    // A state's delta group: for a VARIANT, ALL its non-frame blocks in state order
+    // (repetition intended — the changing context that gives `d` its meaning); for
+    // ACCRETIVE/baseline, only the blocks FIRST seen in it (new content once).
+    const deltaOf = (s, i) => s.keys.filter((k) => !frame.has(k) && (isVariant[i] || firstState.get(k) === i));
+
+    // Anchor a group before the first NON-WEAK frame block that follows its first
+    // delta in the state's own order (a weak `---`/stub divider recurs in every
+    // view, so it is skipped — the revealed view then lands AFTER the base content,
+    // #27); END when nothing frame-y follows (load-more/appended content).
+    const anchorOf = (s, delta) => {
+      for (let j = s.keys.indexOf(delta[0]) + 1; j < s.keys.length; j++) {
+        const k = s.keys[j];
+        if (frame.has(k) && !isWeakAnchor(textOf(k))) return k;
+      }
+      return null; // END
+    };
+
+    const groups = []; // { anchor, order, label, prov, keys }
+    states.forEach((s, i) => {
+      const delta = deltaOf(s, i);
+      if (delta.length) groups.push({ anchor: anchorOf(s, delta), order: s.order || 0, label: s.label, prov: s.provenance, keys: delta });
+    });
+
+    // Bucket groups by anchor (null = END) and sort each slot by `order` (base
+    // first), stable on discovery order — the #27 representation ordering.
+    const byAnchor = new Map();
+    groups.forEach((g, gi) => {
+      if (!byAnchor.has(g.anchor)) byAnchor.set(g.anchor, []);
+      byAnchor.get(g.anchor).push({ ...g, gi });
+    });
+    for (const arr of byAnchor.values()) arr.sort((a, b) => a.order - b.order || a.gi - b.gi);
+
+    const doc = [];
+    const emit = (g) => g.keys.forEach((k) => doc.push({ text: textOf(k), label: g.label, provenance: g.prov }));
+    for (const k of base.keys) {
+      if (!frame.has(k)) continue; // frame skeleton, in baseline document order
+      (byAnchor.get(k) || []).forEach(emit);
+      doc.push({ text: textOf(k), label: null, provenance: this.prov.get(k) });
+    }
+    (byAnchor.get(null) || []).forEach(emit); // END-anchored groups (appended content)
+    return doc;
+  }
+
   size() {
-    return this.blocks.length;
+    return this.store.size; // count of UNIQUE blocks held
   }
 
-  /** Raw blocks (`{ text, provenance }`) in capture order for the layout router. */
+  /** The FAITHFUL per-state record: each captured state reconstructed VERBATIM from
+   *  its own ordered blocks — the complete snapshot (A,b,c / A,b,d / r,b,d). This is
+   *  where full co-occurrence lives, so a partial change never strands a fragment
+   *  out of the state it belongs to. Consumed as the `states/…` artifact. */
+  states() {
+    return this._states.map((s) => ({
+      label: s.label,
+      provenance: s.provenance,
+      order: s.order,
+      markdown: s.keys.map((k) => this.store.get(k)).join('\n\n'),
+    }));
+  }
+
+  /** Raw blocks (`{ text, provenance }`) in reading order for the layout router. */
   toBlocks() {
-    return this.blocks.map((b) => ({ text: b.text, provenance: b.provenance || 'baseline' }));
+    return this._render().map((b) => ({ text: b.text, provenance: b.provenance || 'baseline' }));
   }
 
+  /** The consolidated .md: compact (the shared frame once) but STRUCTURED — each
+   *  reveal state's changing blocks grouped under a VISIBLE `**label:**` marker
+   *  (an HTML comment vanishes when rendered), never orphaned into a flat merge.
+   *  The complete per-state snapshots live in states(). */
   toMarkdown() {
     const out = [];
     let lastLabel = null;
-    for (const blk of this.blocks) {
-      // A VISIBLE variant marker: the tab's own label, bold, where the original UI
-      // showed the tab. An HTML comment (`<!-- variant: … -->`) disappears in every
-      // rendered view, leaving the variants indistinguishable from one another.
+    for (const blk of this._render()) {
       if (blk.label && blk.label !== lastLabel) out.push(`**${blk.label}:**`);
       lastLabel = blk.label || null;
       out.push(blk.text);
