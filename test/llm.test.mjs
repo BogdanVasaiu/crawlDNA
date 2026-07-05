@@ -36,14 +36,14 @@ test('noAi wins over everything → provider none; chat refuses it with a clear 
   await assert.rejects(() => chat(llm, 'sys', 'user'), /disabled/);
 });
 
-test('openai: api key falls back to SAGECRAWL_API_KEY then OPENAI_API_KEY', () => {
-  const prevSage = process.env.SAGECRAWL_API_KEY;
+test('openai: api key falls back to CRAWLDNA_API_KEY then OPENAI_API_KEY', () => {
+  const prevSage = process.env.CRAWLDNA_API_KEY;
   const prevOpen = process.env.OPENAI_API_KEY;
   try {
-    process.env.SAGECRAWL_API_KEY = 'sage-key';
+    process.env.CRAWLDNA_API_KEY = 'sage-key';
     process.env.OPENAI_API_KEY = 'openai-key';
     assert.equal(resolveLlm({ provider: 'openai', baseUrl: 'https://x.dev' }).apiKey, 'sage-key');
-    delete process.env.SAGECRAWL_API_KEY;
+    delete process.env.CRAWLDNA_API_KEY;
     assert.equal(resolveLlm({ provider: 'openai', baseUrl: 'https://x.dev' }).apiKey, 'openai-key');
     // an explicit option always wins over the environment
     assert.equal(
@@ -51,8 +51,8 @@ test('openai: api key falls back to SAGECRAWL_API_KEY then OPENAI_API_KEY', () =
       'explicit',
     );
   } finally {
-    if (prevSage === undefined) delete process.env.SAGECRAWL_API_KEY;
-    else process.env.SAGECRAWL_API_KEY = prevSage;
+    if (prevSage === undefined) delete process.env.CRAWLDNA_API_KEY;
+    else process.env.CRAWLDNA_API_KEY = prevSage;
     if (prevOpen === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = prevOpen;
   }

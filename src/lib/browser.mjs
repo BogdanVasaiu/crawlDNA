@@ -75,7 +75,7 @@ const SNIFFER = `(() => {
     proto.addEventListener = function (type, listener, opts) {
       try {
         if (INTERESTING[type] && this && this.nodeType === 1) {
-          this.setAttribute('data-sagecrawl-listener', '1');
+          this.setAttribute('data-crawldna-listener', '1');
         }
       } catch (e) {}
       return orig.call(this, type, listener, opts);
@@ -84,7 +84,7 @@ const SNIFFER = `(() => {
 })();`;
 
 const CONTEXT_OPTS = {
-  userAgent: 'sagecrawl/0.1 (+https://github.com/sagecrawl)',
+  userAgent: 'crawldna/0.1 (+https://crawldna.com)',
   viewport: { width: 1280, height: 900 },
 };
 

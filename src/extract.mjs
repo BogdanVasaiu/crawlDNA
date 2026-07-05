@@ -132,7 +132,7 @@ function buildTurndown() {
     },
   });
 
-  // #26 — visual headings: data-sagecrawl-heading="2|3|4" carries the level the
+  // #26 — visual headings: data-crawldna-heading="2|3|4" carries the level the
   // page PAINTED (a big/bold short line) without using <h*>. Stamped in-browser
   // from computed styles at capture (markVisualHeadings in engine/perceive.mjs)
   // or from inline styles in the static path (markVisualHeadings below). Emit a
@@ -141,7 +141,7 @@ function buildTurndown() {
   // marked element (a title is never a data row).
   td.addRule('visualHeading', {
     filter: (node) =>
-      /^[2-6]$/.test((node.getAttribute && node.getAttribute('data-sagecrawl-heading')) || ''),
+      /^[2-6]$/.test((node.getAttribute && node.getAttribute('data-crawldna-heading')) || ''),
     replacement: (content, node) => {
       // Strip a LEADING heading marker the flattened content may carry from a
       // marked child (defensive: the twins already refuse to mark an element that
@@ -149,7 +149,7 @@ function buildTurndown() {
       // doubled `#### #### …`.
       const text = String(content || '').replace(/\s*\n+\s*/g, ' ').trim().replace(/^#{1,6}\s+/, '');
       if (!text) return '';
-      const level = parseInt(node.getAttribute('data-sagecrawl-heading'), 10);
+      const level = parseInt(node.getAttribute('data-crawldna-heading'), 10);
       return '\n\n' + '#'.repeat(level) + ' ' + text + '\n\n';
     },
   });
@@ -293,7 +293,7 @@ function pickMainContent(root, contentSelector) {
 // Apps mark titles VISUALLY, not semantically: a card/section title is a short
 // <div> painted bigger (or bolder) than the text around it, and Turndown only
 // trusts <h1>–<h6> — so the page's skeleton flattens to anonymous lines. The
-// browser path stamps data-sagecrawl-heading="2|3|4" from COMPUTED styles at
+// browser path stamps data-crawldna-heading="2|3|4" from COMPUTED styles at
 // capture time (markVisualHeadings in engine/perceive.mjs, inlined into
 // reveal's captureHtml); this is its Node TWIN for the static path: the same
 // ratio rules (rule #2 — a font ratio, never a class name) applied to INLINE
@@ -396,16 +396,16 @@ function headingBannedAt(el) {
     if (HEADING_BANNED_TAGS.has(n.tagName)) return true;
     const role = n.getAttribute('role');
     if (role && HEADING_BANNED_ROLES.test(role)) return true;
-    if (n.getAttribute('data-sagecrawl-heading')) return true;
+    if (n.getAttribute('data-crawldna-heading')) return true;
   }
   return false;
 }
 
-// Includes [data-sagecrawl-heading]: an element that already CONTAINS a marked
+// Includes [data-crawldna-heading]: an element that already CONTAINS a marked
 // title must not itself be marked, else the outer rule wraps the inner marker into
 // `#### #### …` (and mashes title+subtitle onto one line). Marking runs inner-first
 // on the browser twin, so this is what actually blocks the nesting.
-const HEADING_STRUCTURAL = 'h1,h2,h3,h4,h5,h6,table,ul,ol,pre,blockquote,button,a,input,select,textarea,[data-sagecrawl-heading]';
+const HEADING_STRUCTURAL = 'h1,h2,h3,h4,h5,h6,table,ul,ol,pre,blockquote,button,a,input,select,textarea,[data-crawldna-heading]';
 
 /** Is `el` (or one of its near ancestors) a row that gets flattened to a bullet?
  *  If so, a heading marker planted here would collapse into the bullet. */
@@ -417,7 +417,7 @@ function insideFlattenedRow(el) {
   return false;
 }
 
-/** Stamp data-sagecrawl-heading="2|3|4" on inline-styled visual titles. Mutates
+/** Stamp data-crawldna-heading="2|3|4" on inline-styled visual titles. Mutates
  *  the tree (attributes only — content untouched). Browser-stamped markers are
  *  respected, never re-done. */
 function markVisualHeadings(content) {
@@ -425,7 +425,7 @@ function markVisualHeadings(content) {
   if (!page.chars) return;
   const body = dominantSize(page.bySize, 16);
   for (const el of content.querySelectorAll('div, p, section, header')) {
-    if (el.getAttribute('data-sagecrawl-heading')) continue;
+    if (el.getAttribute('data-crawldna-heading')) continue;
     const text = textOf(el);
     if (text.length < 2 || text.length > 60) continue; // a title is one short line
     if (!/\p{L}/u.test(text)) continue; // bare numbers/prices are data, not titles
@@ -456,7 +456,7 @@ function markVisualHeadings(content) {
     if (!jump) continue;
     const ratio = st.maxSize / body;
     const level = ratio >= 1.8 ? 2 : ratio >= 1.35 ? 3 : 4;
-    el.setAttribute('data-sagecrawl-heading', String(level));
+    el.setAttribute('data-crawldna-heading', String(level));
   }
 }
 
@@ -665,11 +665,11 @@ export function extractMarkdown(html, { contentSelector, baseUrl, title } = {}) 
   });
 
   // The reveal marks non-visible elements (hidden modals, off-state placeholders,
-  // on-screen keyboards) with data-sagecrawl-hidden so the serialized HTML doesn't
+  // on-screen keyboards) with data-crawldna-hidden so the serialized HTML doesn't
   // leak them into the output. Drop them before anything else inspects the DOM, so
   // even the main-content picker never lands on a hidden panel. No-op for the
   // static path (no markers present).
-  for (const n of root.querySelectorAll('[data-sagecrawl-hidden]')) n.remove();
+  for (const n of root.querySelectorAll('[data-crawldna-hidden]')) n.remove();
 
   const docTitle =
     title ||
@@ -725,7 +725,7 @@ export function extractMarkdown(html, { contentSelector, baseUrl, title } = {}) 
   }
 
   // #26 — recover the page's visual skeleton: inline-styled titles get their
-  // data-sagecrawl-heading marker (browser captures arrive with markers already
+  // data-crawldna-heading marker (browser captures arrive with markers already
   // stamped from computed styles; those are respected, not re-done). Adds
   // attributes only — marking can never change or lose text.
   try {

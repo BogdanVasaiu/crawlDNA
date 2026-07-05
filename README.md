@@ -1,6 +1,6 @@
-# sagecrawl
+# crawldna
 
-[![tests](https://github.com/BogdanVasaiu/sagecrawl/actions/workflows/test.yml/badge.svg)](https://github.com/BogdanVasaiu/sagecrawl/actions/workflows/test.yml)
+[![tests](https://github.com/BogdanVasaiu/crawldna/actions/workflows/test.yml/badge.svg)](https://github.com/BogdanVasaiu/crawldna/actions/workflows/test.yml)
 [![license: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
 A **general, task-driven web crawler**. Give it one or more links, each with a
@@ -24,7 +24,7 @@ It runs three ways from a single headless core:
 2. **Importable library** — another Node project imports it and consumes results.
 3. **Web UI** *(optional)* — a control panel to set links/tasks, run, and watch
    live. It's a thin frontend over the same core and ships **only with the source
-   repository**, never the npm package — so a `sagecrawl` dependency stays lean and
+   repository**, never the npm package — so a `crawldna` dependency stays lean and
    the CLI/library work with zero UI weight.
 
 > 📐 **How it works:** see [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full
@@ -36,8 +36,8 @@ It runs three ways from a single headless core:
 Standalone:
 
 ```sh
-git clone <repo> sagecrawl
-cd sagecrawl
+git clone <repo> crawldna
+cd crawldna
 npm install
 node bin/cli.mjs https://docusaurus.io/docs --task "Extract all documentation"
 ```
@@ -45,7 +45,7 @@ node bin/cli.mjs https://docusaurus.io/docs --task "Extract all documentation"
 As a library:
 
 ```sh
-npm install sagecrawl
+npm install crawldna
 ```
 
 The npm package is just the crawler core + CLI — the Web UI is **not** included, so
@@ -62,7 +62,7 @@ above and run `npm run serve` (see [Web UI](#web-ui)).
     it: `ollama pull qwen3-coder:30b`, then `--model qwen3-coder:30b`.
   - **Any OpenAI-compatible API** (OpenAI, OpenRouter, Groq, Together, …):
     `--provider openai --base-url <…/v1> --model <id> --api-key <key>` (the key can
-    also come from `SAGECRAWL_API_KEY` / `OPENAI_API_KEY`).
+    also come from `CRAWLDNA_API_KEY` / `OPENAI_API_KEY`).
 
   If the model isn't reachable the crawl still runs but **warns** that it has dropped
   to degraded heuristic mode (no AI reveal/scope/link-gating) — so you never get poor
@@ -94,32 +94,32 @@ actually needs the browser.
 ## CLI
 
 ```sh
-sagecrawl <url> [--task "..."]                       # crawl one site (Phase 1)
-sagecrawl crawl <url> [--task "..."] [--model qwen3-coder:30b | --no-ai]
+crawldna <url> [--task "..."]                       # crawl one site (Phase 1)
+crawldna crawl <url> [--task "..."] [--model qwen3-coder:30b | --no-ai]
                     [--mode complete|targeted|auto]
                     [--browser auto|never|always] [--concurrency 4]
                     [--include "..."] [--exclude "..."] [--max-pages 0]
                     [--cache-dir <dir>]
-sagecrawl resume <runId>                             # complete an interrupted run (crash/stop)
-sagecrawl reshape <runId> --ask "..."                # reshape a saved extraction (Phase 2)
-sagecrawl runs [list|rm <id…>|clear|path]            # manage cached runs
-sagecrawl serve [--port 4000]                        # start the Web UI
-sagecrawl --help
+crawldna resume <runId>                             # complete an interrupted run (crash/stop)
+crawldna reshape <runId> --ask "..."                # reshape a saved extraction (Phase 2)
+crawldna runs [list|rm <id…>|clear|path]            # manage cached runs
+crawldna serve [--port 4000]                        # start the Web UI
+crawldna --help
 ```
 
-**The CLI saves every run automatically** to the runs cache (`<cwd>/.sagecrawl/runs` —
+**The CLI saves every run automatically** to the runs cache (`<cwd>/.crawldna/runs` —
 rooted at the directory you run from, overridable with `--cache-dir` or the
-`SAGECRAWL_CACHE_DIR` env var) — there is no `--out` flag. Each run is one folder: the
+`CRAWLDNA_CACHE_DIR` env var) — there is no `--out` flag. Each run is one folder: the
 grouped Markdown file(s), a `manifest.json`, and a small `run.json` summary.
 *(As a **library**, saving is opt-in — see [Library API](#library-api).)*
 
 **A crash never loses extracted content.** While the crawl runs, every kept page is
 also journaled to disk *as it is captured* (`<scanId>/pages.jsonl`, append-only,
 verbatim). If the process dies — or you stop it with Ctrl-C — the run stays in the
-cache as *resumable* (`sagecrawl runs` marks it), and
+cache as *resumable* (`crawldna runs` marks it), and
 
 ```sh
-sagecrawl resume <runId>          # restores the journaled pages (not re-crawled),
+crawldna resume <runId>          # restores the journaled pages (not re-crawled),
                                   # re-seeds the frontier from their recorded links,
                                   # and completes the run into the SAME folder
 ```
@@ -131,7 +131,7 @@ var. A run that finished normally can't be resumed (there's nothing left to do).
 **Per-link tasks** — either repeated pairs:
 
 ```sh
-sagecrawl --url https://a.dev --task "Get pricing" --url https://b.dev --task "Get API docs"
+crawldna --url https://a.dev --task "Get pricing" --url https://b.dev --task "Get API docs"
 ```
 
 …or a JSON file (`--targets targets.json`) whose contents are a `targets` array:
@@ -146,10 +146,10 @@ sagecrawl --url https://a.dev --task "Get pricing" --url https://b.dev --task "G
 ### Managing cached runs
 
 ```sh
-sagecrawl runs                 # list saved runs (id, date, task, files)
-sagecrawl runs rm <id> [<id>…] # delete specific run(s)
-sagecrawl runs clear           # delete every cached run
-sagecrawl runs path            # print the cache directory
+crawldna runs                 # list saved runs (id, date, task, files)
+crawldna runs rm <id> [<id>…] # delete specific run(s)
+crawldna runs clear           # delete every cached run
+crawldna runs path            # print the cache directory
 ```
 
 ## Web UI
@@ -162,7 +162,7 @@ sagecrawl runs path            # print the cache directory
 > # open http://localhost:4000
 > ```
 >
-> If you run `sagecrawl serve` from a bare `npm install` (no UI present), it won't
+> If you run `crawldna serve` from a bare `npm install` (no UI present), it won't
 > crash — it prints how to get the UI and points you at the CLI/library, which do
 > everything without it.
 
@@ -185,7 +185,7 @@ The UI has two steps:
 The single most important contract (refdna depends on it):
 
 ```js
-import { crawlDocs } from 'sagecrawl';
+import { crawlDocs } from 'crawldna';
 
 const run = crawlDocs(targets, options);
 
@@ -224,7 +224,7 @@ Array<{ url, task? }>                  // many targets, each with its own task
 | `noAi` | `false` | crawl with **zero model calls** (no model needed): reveal runs on DOM heuristics, pages are kept whole, every in-scope link is followed. Zero tokens; output is not task-filtered and big sites can take longer — contain with `maxPages`/`include`/`exclude`. The task has **no role** here (it speaks only to the AI): an explicit `task` — or `minRelevance`, which reads it — is refused loudly, and files are named from the site. Incompatible with `mode: "targeted"` (refused loudly) |
 | `mode` | `"complete"` | **what to extract, as an explicit switch** — the task wording never flips engine behaviour. `"complete"` (default): everything reachable — completeness shortcuts (`llms-full.txt`/sitemap) tried first, pages kept **whole**, and **zero AI link-gate/scoping calls** even with AI on (the default-on mirror dedup keeps follow-everything contained; AI still drives reveal + nav-plan). Works with `noAi`. `"targeted"`: only what the task asks — AI link gate + per-page section scoping, in any language (**needs AI**). `"auto"`: legacy — a multilingual regex on the task picks the docs path; never the default, kept only for old saved runs and callers that name it |
 | `baseUrl` | — | API base URL for `provider: "openai"` |
-| `apiKey` | — | API key for `provider: "openai"` (falls back to `SAGECRAWL_API_KEY` / `OPENAI_API_KEY`) |
+| `apiKey` | — | API key for `provider: "openai"` (falls back to `CRAWLDNA_API_KEY` / `OPENAI_API_KEY`) |
 | `ollamaHost` | `127.0.0.1:11434` | override the Ollama server |
 | `browser` | `"auto"` | `never` \| `auto` \| `always` (lazy-loads Playwright) |
 | `concurrency` | `4` | parallel page fetches |
@@ -236,7 +236,7 @@ Array<{ url, task? }>                  // many targets, each with its own task
 | `delay` | `0` | politeness (opt-in): minimum ms between requests to the **same host** — parallel workers queue behind each other per host. `0` = off |
 | `respectRobots` | `false` | politeness (opt-in): read `robots.txt` — disallowed URLs are **skipped with a warning** (never silently), `Crawl-delay` honoured (the larger of it and `delay` wins). Separate from this, the **anti-bot challenge guard is always on**: a bot-defense interstitial (Cloudflare "checking your browser", CAPTCHA walls — often served with HTTP 200) is never kept as content — loud `anti-bot` warning, one retry with backoff, then a declared skip. Never bypassed |
 | `save` | `false` | persist the run to the cache. **Library default: off** (result returned in memory). The CLI/UI turn it on |
-| `cacheDir` | — | where to save when saving is on (default `<cwd>/.sagecrawl/runs`); setting it also turns saving on |
+| `cacheDir` | — | where to save when saving is on (default `<cwd>/.crawldna/runs`); setting it also turns saving on |
 | `perDocument` | `false` | also package one identifiable `.md` per page (+ `index.md` + `documents.jsonl`) for programmatic use, alongside the consolidated `.md`. Verbatim — see [Output](#output) |
 | `mirrorHamming` | `8` | collapse mirror/variant re-servings of a kept page: dropped only when the URL is a **sibling** (same locale-stripped path — mirror hosts like `dev.`/`v2.`, UI-state query variants, `/en/x` vs `/x` locale twins) **and** the content SimHash is within the distance. Sibling-shaped pages with real differences (`?version=A` vs `B`) measure far apart and are kept. Links on a dropped duplicate are not followed, so mirror cascades stop at their first page. `0` = off |
 | `nearDupHamming` | `0` | collapse near-duplicate pages **across different paths** within this SimHash Hamming distance (`0` = off). **Opt-in** — content similarity alone can't tell a duplicate from a sibling (templated API pages measure ≤3 apart), so this can drop a real page |
@@ -269,7 +269,7 @@ Markdown is already here in memory under `scans[].files[].markdown` — save it
 wherever you like:
 
 ```js
-import { crawlDocs } from 'sagecrawl';
+import { crawlDocs } from 'crawldna';
 import { writeFile } from 'node:fs/promises';
 
 const run = crawlDocs([{ url, task }], { provider: 'openai', baseUrl, apiKey, model: 'gpt-4o-mini' });
@@ -279,7 +279,7 @@ for (const s of scans)
     await writeFile(`./out/${f.filename}`, f.markdown);   // you decide where
 ```
 
-To *also* have sagecrawl persist a run to its cache (so `reshape` can reuse it), pass
+To *also* have crawldna persist a run to its cache (so `reshape` can reuse it), pass
 `save: true` or a `cacheDir` — then `result.run` is populated.
 
 ## How it crawls
@@ -338,7 +338,7 @@ skipped with a warning — never circumvented.
 ## Output
 
 The **CLI and Web UI** save every run automatically — one folder per run under the
-runs cache (`<cwd>/.sagecrawl/runs/<runId>/`). *(As a library, saving is opt-in — see
+runs cache (`<cwd>/.crawldna/runs/<runId>/`). *(As a library, saving is opt-in — see
 [Library API](#library-api); the layout below is what gets written when it's on.)*
 
 - **One verbatim `.md` per link.** The crawl consolidates everything it kept for a
@@ -352,7 +352,7 @@ runs cache (`<cwd>/.sagecrawl/runs/<runId>/`). *(As a library, saving is opt-in 
 - **`run.json`** — a small summary used to list runs quickly.
 
 Each Markdown file starts with a short YAML front-matter block (`task`,
-`generatedAt`, `sources`). Manage saved runs with `sagecrawl runs …` or the Web UI's
+`generatedAt`, `sources`). Manage saved runs with `crawldna runs …` or the Web UI's
 "Previous runs" list.
 
 ### Per-document output (opt-in)
@@ -383,8 +383,8 @@ into several files. It is **value-faithful**: every kept name, number, price and
 time is copied exactly — it never invents or alters a value.
 
 ```sh
-sagecrawl reshape <runId> --ask "make a table of the prices"
-sagecrawl reshape <runId> --ask "split the menu into one file per category" --scan 01-example-com
+crawldna reshape <runId> --ask "make a table of the prices"
+crawldna reshape <runId> --ask "split the menu into one file per category" --scan 01-example-com
 ```
 
 "Value-faithful" is **enforced, not just requested**:
@@ -446,6 +446,6 @@ Run it before and after any engine change; a live check on a reference site
 ## License
 
 [AGPL-3.0-only](LICENSE). Free to use, self-host and modify; if you offer a
-modified version of sagecrawl to others as a network service, you must release
+modified version of crawldna to others as a network service, you must release
 your service's source under the same license. Internal/personal use carries no
 such obligation. For a commercial license outside these terms, open an issue.

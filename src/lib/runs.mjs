@@ -13,8 +13,8 @@
 //
 // The run is just the container recording which links were crawled together;
 // the user can open one link on its own or the whole run grouped. The cache root
-// defaults to `<project>/.sagecrawl/runs`, overridable with the `cacheDir` option or
-// the SAGECRAWL_CACHE_DIR env var. Runs are kept until explicitly deleted.
+// defaults to `<project>/.crawldna/runs`, overridable with the `cacheDir` option or
+// the CRAWLDNA_CACHE_DIR env var. Runs are kept until explicitly deleted.
 
 import { mkdir, writeFile, appendFile, readFile, readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
@@ -25,16 +25,16 @@ const ID_RE = /^[A-Za-z0-9_-]+$/;
 
 /**
  * Resolve the cache root directory (explicit option > env > the CONSUMER's cwd).
- * The default is rooted at `process.cwd()` — the project that is RUNNING sagecrawl —
- * never the package's own install location. When sagecrawl is imported as a
+ * The default is rooted at `process.cwd()` — the project that is RUNNING crawldna —
+ * never the package's own install location. When crawldna is imported as a
  * dependency, the old package-relative default resolved inside `node_modules/`,
  * which is both surprising and wiped on reinstall. The runs cache belongs to the
  * caller's project, so cwd is the correct, portable default.
  */
 export function cacheRoot(opts = {}) {
   if (opts && opts.cacheDir) return path.resolve(opts.cacheDir);
-  if (process.env.SAGECRAWL_CACHE_DIR) return path.resolve(process.env.SAGECRAWL_CACHE_DIR);
-  return path.join(process.cwd(), '.sagecrawl', 'runs');
+  if (process.env.CRAWLDNA_CACHE_DIR) return path.resolve(process.env.CRAWLDNA_CACHE_DIR);
+  return path.join(process.cwd(), '.crawldna', 'runs');
 }
 
 function runDir(id, opts = {}) {

@@ -17,7 +17,7 @@
  * @param {string} [ua]  our user-agent product token
  * @returns {{ rules: Array<{type:'allow'|'disallow', path:string}>, crawlDelay: number|null }}
  */
-export function parseRobots(text, ua = 'sagecrawl') {
+export function parseRobots(text, ua = 'crawldna') {
   const groups = [];
   let cur = null;
   let lastWasAgent = false;

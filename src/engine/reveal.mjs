@@ -154,7 +154,7 @@ export async function revealAll(page, ctx, url, task) {
   // active (so all still accumulate); chrome never revealed stays out. Generic —
   // no per-site logic. If reveal misses a control, raise --max-actions (the right
   // knob), rather than leaking every hidden panel.
-  // #26 — the same atomic pass also stamps data-sagecrawl-heading on VISUAL
+  // #26 — the same atomic pass also stamps data-crawldna-heading on VISUAL
   // headings (short lines whose font jumps vs the local body text): computed
   // styles only exist here in the browser, and extract.mjs turns the marker
   // into ##/###/####, giving the .md the skeleton the page painted. The
@@ -167,7 +167,7 @@ export async function revealAll(page, ctx, url, task) {
         try {
           headingMarked = (${markVisualHeadings.toString()})() || [];
         } catch (e) {
-          headingMarked = document.querySelectorAll('[data-sagecrawl-heading]');
+          headingMarked = document.querySelectorAll('[data-crawldna-heading]');
         }
         const isHidden = (el) => {
           const s = getComputedStyle(el);
@@ -178,13 +178,13 @@ export async function revealAll(page, ctx, url, task) {
         const marked = [];
         for (const el of document.body.querySelectorAll('*')) {
           if (isHidden(el)) {
-            el.setAttribute('data-sagecrawl-hidden', '1');
+            el.setAttribute('data-crawldna-hidden', '1');
             marked.push(el);
           }
         }
         const out = document.documentElement.outerHTML;
-        for (const el of marked) el.removeAttribute('data-sagecrawl-hidden');
-        for (const el of headingMarked) el.removeAttribute('data-sagecrawl-heading');
+        for (const el of marked) el.removeAttribute('data-crawldna-hidden');
+        for (const el of headingMarked) el.removeAttribute('data-crawldna-heading');
         return out;
       })()`);
     } catch {

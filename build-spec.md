@@ -1,6 +1,6 @@
-# sagecrawl — Build Specification
+# crawldna — Build Specification
 
-> **For the AI building this:** This is the complete spec for a general, task-driven web crawler. Build it exactly to the **Core Principles** and the interface **contracts** below. Where a detail isn't specified, choose the simplest option that respects the principles. The name `sagecrawl` is a placeholder — keep it consistent but it will be renamed.
+> **For the AI building this:** This is the complete spec for a general, task-driven web crawler. Build it exactly to the **Core Principles** and the interface **contracts** below. Where a detail isn't specified, choose the simplest option that respects the principles. The name `crawldna` is a placeholder — keep it consistent but it will be renamed.
 
 ---
 
@@ -33,7 +33,7 @@ A task can be **shared** across all links, or set **per link**.
 - **Minimal, bounded dependencies.** Lean on Node built-ins (`fetch`, `node:util.parseArgs`, `node:http`, `node:events`, web streams). Only the small set in §10 is allowed in core. Anything heavy must be optional.
 - **One headless core. Thin faces.** All logic lives in a core library that **emits an event stream** and **resolves to a result**. The CLI, UI, and refdna are only *consumers* of that core. No crawling/strategy logic in the CLI or UI.
 - **The browser is the actuator for actions, and an optional, lazy-loaded dependency.** Taking actions / revealing hidden content requires a real browser (Playwright), so crawls that need actions require it installed once (`npx playwright install chromium`). Pure structured/static extraction (e.g. a docs site exposing `llms-full.txt`) runs **without** it.
-- **Easy install.** Standalone: `git clone` → `npm install` → `node bin/cli.mjs <url>`. Library: `npm install sagecrawl` → `import`.
+- **Easy install.** Standalone: `git clone` → `npm install` → `node bin/cli.mjs <url>`. Library: `npm install crawldna` → `import`.
 - **MIT licensed.**
 
 ---
@@ -72,7 +72,7 @@ For any **non-documentation task with no profile**, the crawler uses the engine 
 The single most important contract — refdna depends on it. Implement exactly.
 
 ```js
-import { crawlDocs } from 'sagecrawl';   // will be renamed
+import { crawlDocs } from 'crawldna';   // will be renamed
 
 const run = crawlDocs(targets, options);
 
@@ -112,7 +112,7 @@ targets:
   maxActions: number,  // per-page action cap for the engine. Default: 40.
   include: string | RegExp,  // only crawl URLs matching this
   exclude: string | RegExp,  // skip URLs matching this
-  cacheDir: string,    // override the runs-cache root (default <project>/.sagecrawl/runs)
+  cacheDir: string,    // override the runs-cache root (default <project>/.crawldna/runs)
   onEvent: (ev) => void,
 }
 ```
@@ -160,23 +160,23 @@ The core emits these (`{ type, ...payload }`). The CLI and UI render them.
 Uses `node:util.parseArgs`. Flags map to the options in §5.
 
 ```
-sagecrawl <url> [--task "..."]                       # crawl one site
-sagecrawl crawl <url> [--task "..."] [--model qwen3-coder:30b]
+crawldna <url> [--task "..."]                       # crawl one site
+crawldna crawl <url> [--task "..."] [--model qwen3-coder:30b]
                     [--browser auto|never|always] [--concurrency 4]
                     [--include "..."] [--exclude "..."] [--max-pages 0]
                     [--cache-dir <dir>]
-sagecrawl runs [list|rm <id…>|clear|path]            # manage cached runs
-sagecrawl serve [--port 4000]                        # start the Web UI
-sagecrawl --help
+crawldna runs [list|rm <id…>|clear|path]            # manage cached runs
+crawldna serve [--port 4000]                        # start the Web UI
+crawldna --help
 ```
 
-**Per-link tasks:** support either repeated pairs `--url A --task "..." --url B --task "..."`, or a `--targets targets.json` file whose contents are the `targets` array from §5. The CLI prints concise live lines (strategy, actions, extractions, warnings) and a final summary including the saved run id/path. **`sagecrawl runs`** lists, deletes (`rm <id>`), or clears cached runs and prints the cache path.
+**Per-link tasks:** support either repeated pairs `--url A --task "..." --url B --task "..."`, or a `--targets targets.json` file whose contents are the `targets` array from §5. The CLI prints concise live lines (strategy, actions, extractions, warnings) and a final summary including the saved run id/path. **`crawldna runs`** lists, deletes (`rm <id>`), or clears cached runs and prints the cache path.
 
 ---
 
 ## 8. Web UI (optional) — control surface + real-time view
 
-Started with `sagecrawl serve`. It must let the user do **everything the CLI does**.
+Started with `crawldna serve`. It must let the user do **everything the CLI does**.
 
 ### Server
 A tiny `node:http` server, no framework:
@@ -217,8 +217,8 @@ Single page, **vanilla JS** (`EventSource` for the live stream). `preact` + `htm
 
 - Always available via `run.result` (§5).
 - **Every run is saved to a cache automatically** (no `output` option). The cache
-  root is `<project>/.sagecrawl/runs` by default, overridable with the `cacheDir`
-  option / `--cache-dir` flag / `SAGECRAWL_CACHE_DIR` env var. Each run is one folder
+  root is `<project>/.crawldna/runs` by default, overridable with the `cacheDir`
+  option / `--cache-dir` flag / `CRAWLDNA_CACHE_DIR` env var. Each run is one folder
   `<runId>/` containing:
   - **AI-grouped Markdown.** By default the whole extraction is **one `.md`**. The
     model splits it into **several named files only when the task asks** to:
@@ -235,7 +235,7 @@ Single page, **vanilla JS** (`EventSource` for the live stream). `preact` + `htm
     strategy, file }`, plus `stats` and `warnings`. **refdna reads this manifest**
     — keep it stable and machine-friendly.
   - A small **`run.json`** summary used to list runs quickly.
-- Runs are kept until explicitly deleted (UI button or `sagecrawl runs rm/clear`).
+- Runs are kept until explicitly deleted (UI button or `crawldna runs rm/clear`).
 
 Markdown must preserve headings, fenced code blocks (with language), inline code, tables, and links. Strip site chrome (nav, sidebar, footer, cookie banners).
 
@@ -285,14 +285,14 @@ Fetch pages with a simple concurrency pool (size = `concurrency`). The engine ru
 
 ## 12. Acceptance criteria (definition of done)
 
-- [ ] **Library:** `import { crawlDocs } from 'sagecrawl'` returns a `run` that is async-iterable and has `.result` and `.stop()`. Accepts per-link tasks (§5 `targets`).
+- [ ] **Library:** `import { crawlDocs } from 'crawldna'` returns a `run` that is async-iterable and has `.result` and `.stop()`. Accepts per-link tasks (§5 `targets`).
 - [ ] **Standalone:** `git clone … && npm install && node bin/cli.mjs <url> --task "..."` produces clean Markdown.
 - [ ] **General engine:** given a non-documentation site and a task, it reveals interaction-hidden content (clicks/expands), extracts task-relevant Markdown, and follows useful links.
 - [ ] **Documentation profile / completeness:** for a Docusaurus site and a sitemap-based site, *every* doc page appears in the output. For a site with `llms-full.txt`, that file is used and the output matches it.
 - [ ] **Browser optional:** static/structured crawls run with Playwright *not installed*. Action-taking crawls require it; when it's needed but missing, a clear `warn` instructs the user, and the rest still completes.
-- [ ] **UI:** `sagecrawl serve` opens a page where the user can add multiple links each with a task (or a shared task), set options, **Start** and **Stop**, and watch live: the page currently being processed, the extractions, and the actions taken.
+- [ ] **UI:** `crawldna serve` opens a page where the user can add multiple links each with a task (or a shared task), set options, **Start** and **Stop**, and watch live: the page currently being processed, the extractions, and the actions taken.
 - [ ] **Precision:** any site/page where completeness can't be guaranteed produces a `warn` event and a `warnings` entry in the manifest.
-- [ ] **Output:** every run is saved to the cache as AI-grouped `.md` (one file by default, several when the task asks to split) plus a stable `manifest.json` and `run.json`. Runs are listable/deletable via `sagecrawl runs` and the UI.
+- [ ] **Output:** every run is saved to the cache as AI-grouped `.md` (one file by default, several when the task asks to split) plus a stable `manifest.json` and `run.json`. Runs are listable/deletable via `crawldna runs` and the UI.
 - [ ] **Deps:** limited to §10; `playwright` in `optionalDependencies`; no build step; ESM only.
 
 ---
@@ -324,7 +324,7 @@ Skip the page and emit a `warn`; never attempt to circumvent protections.
 ## 15. Repo structure
 
 ```
-sagecrawl/
+crawldna/
   package.json          # "type":"module", exports, "bin", optionalDependencies: { playwright }
   README.md             # install + usage (clone → npm install → run) and library usage
   LICENSE               # MIT

@@ -1,4 +1,4 @@
-# sagecrawl — TODO miglioramenti
+# crawldna — TODO miglioramenti
 
 > Backlog di miglioramenti **allineati alla filosofia del progetto**, pensato per
 > essere lavorato un pezzo alla volta nelle sessioni future. In una nuova sessione
@@ -15,9 +15,9 @@
 
 ---
 
-## Posizionamento (cosa È sagecrawl)
+## Posizionamento (cosa È crawldna)
 
-sagecrawl è uno **strumento generale e autonomo**, utile a chiunque — non un pezzo di
+crawldna è uno **strumento generale e autonomo**, utile a chiunque — non un pezzo di
 refdna. Il suo valore, per qualsiasi utente e qualsiasi sito:
 
 1. **Estrae tutto, anche il nascosto/dinamico** (il reveal: tab, accordion, "load more",
@@ -27,10 +27,10 @@ refdna. Il suo valore, per qualsiasi utente e qualsiasi sito:
 3. **Output pulito, senza roba inutile**, e **fedele** (verbatim nel crawl; ogni
    trasformazione è Fase 2/reshape).
 
-**refdna è SOLO UNO dei consumatori** (userà sagecrawl per il caso "documentazioni").
+**refdna è SOLO UNO dei consumatori** (userà crawldna per il caso "documentazioni").
 Le scelte di design vanno valutate sul tool **generale**, non su refdna. Differenza dai
 concorrenti task-driven (Firecrawl `/extract`, ScrapeGraphAI): loro **trasformano** la
-pagina nei campi di uno schema; sagecrawl tiene **tutto il pertinente, verbatim** — non
+pagina nei campi di uno schema; crawldna tiene **tutto il pertinente, verbatim** — non
 perdi ciò che non avevi previsto.
 
 ---
@@ -671,7 +671,7 @@ parent/child, metadata enrichment) — come esempio di un consumatore tipico.
 >   righe di codice — la prosa può essere riformulata, i VALORI no) e li cerca nelle fonti
 >   COMPLETE (non nel contesto del modello) + nell'istruzione dell'utente (un valore digitato
 >   dall'utente non è un'invenzione). I non-trovati: banner di avviso DENTRO il file (block-
->   quote firmato sagecrawl, strippabile meccanicamente), `fidelity` per-file nel risultato/
+>   quote firmato crawldna, strippabile meccanicamente), `fidelity` per-file nel risultato/
 >   session.json, warning in CLI. Matching normalizzato e generoso (substring, numeri
 >   separator-insensitive): cattura affidabilmente il caso pericoloso (valori che non
 >   esistono da nessuna parte), non fa la polizia alla prosa. Default ON, `--no-verify` /
@@ -686,7 +686,7 @@ parent/child, metadata enrichment) — come esempio di un consumatore tipico.
 > in miniatura il caso Vuetify contro uno stub OpenAI-compatibile: la sezione giusta
 > raggiunge il modello (non il filler), `'elevated'` inventato → flaggato nel file salvato,
 > `'$vuetify.close'` reale → passa, ri-emissione → saltata con nota. ⏳ _Da provare dal vivo_
-> sul run Vuetify esistente (`sagecrawl reshape 20260701-095045-c57db0 --ask "dammi i props
+> sul run Vuetify esistente (`crawldna reshape 20260701-095045-c57db0 --ask "dammi i props
 > del v-alert"`). _Limite onesto:_ un valore che ESISTE nelle fonti ma è attribuito alla
 > cosa sbagliata passa (serve il giudizio semantico, non deterministico); la rete cattura
 > l'invenzione, non la mis-attribuzione.
@@ -788,7 +788,7 @@ generale); misurazione coverage (sitemap-coverage / golden set; la coverage asso
 ### Correzioni applicate (verbale, 2026-07-02) — 97/97 test verdi
 
 1. **Click sull'elemento sbagliato** ([src/engine/perceive.mjs](src/engine/perceive.mjs)):
-   gli id `data-sagecrawl-id` ripartivano da 0 a ogni passata SENZA pulire quelli
+   gli id `data-crawldna-id` ripartivano da 0 a ogni passata SENZA pulire quelli
    vecchi → il locator `.first()` poteva cliccare un elemento stale e corrompere la
    camminata del reveal. Ora ogni perceive rimuove i marker prima di ristampare.
 2. **Estrazione che perdeva contenuto vero** ([src/extract.mjs](src/extract.mjs)):
@@ -862,12 +862,12 @@ generale); misurazione coverage (sitemap-coverage / golden set; la coverage asso
 >   è assemblato dalla RAM come oggi (deliberato: se il disco avesse perso un append,
 >   leggere da disco perderebbe pagine che la RAM ha — regola #1; il journal è la rete
 >   anti-crash, non la fonte di verità di un run sano).
-> - **`resumeCrawl(runId)`** ([index.mjs](src/index.mjs)) = CLI `sagecrawl resume <runId>`
+> - **`resumeCrawl(runId)`** ([index.mjs](src/index.mjs)) = CLI `crawldna resume <runId>`
 >   + UI `POST /resume`: rilegge run.json/manifest (opzioni+targets salvati, override da
 >   flag), rigioca il journal — pagine ripristinate verbatim nel risultato (mai
 >   ri-renderizzate), hash dedup ricostruiti con la STESSA `pageSignature` condivisa con
 >   addPage, URL pre-visitati, link registrati → semi della frontiera — e completa nello
->   STESSO folder. Evento `resume` (`restored: N`) per CLI/UI; `sagecrawl runs` marca i
+>   STESSO folder. Evento `resume` (`restored: N`) per CLI/UI; `crawldna runs` marca i
 >   run interrotti/fermati come resumabili. Un run `done` non si resuma (errore chiaro).
 > - **Contratto libreria invariato**: senza `save`/`cacheDir` zero scritture (testato).
 >
@@ -894,7 +894,7 @@ un run interrotto; anche uno Stop volontario ri-parte sempre da zero.
   o direttamente il formato per-documento #10) — verbatim, append-only.
 - A fine run assemblare il consolidato COME OGGI ma leggendo da disco, e marcare
   `run.json` → `done`.
-- `sagecrawl resume <runId>`: ricostruisce `visited` + dedup-hashes dalle pagine già
+- `crawldna resume <runId>`: ricostruisce `visited` + dedup-hashes dalle pagine già
   salvate, ri-semina la frontiera (sitemap/entry) e completa il run.
 - Il contratto libreria NON cambia: senza `save`/`cacheDir` tutto resta in memoria.
 
@@ -1108,7 +1108,7 @@ sensibilmente; il set di pagine tenute resta identico (harness #12).
 > 97/97 verdi in ~1.7s) e Chromium non va MAI scaricato in CI. Badge aggiunto in cima
 > al README. Lockfile verificato in sync con package.json (`npm ci` non fallirà).
 > ⚠️ **Slug provvisorio:** il repo non ha ancora un remote GitHub → badge e URL usano
-> `BogdanVasaiu/sagecrawl`; quando si configura il remote (vedi #18, repository/
+> `BogdanVasaiu/crawldna`; quando si configura il remote (vedi #18, repository/
 > homepage in package.json) va allineato se lo slug reale è diverso. Il workflow in
 > sé è slug-agnostico (si attiva da solo al primo push).
 
@@ -1130,7 +1130,7 @@ check del PR.
 **Effetto:** fruibilità come libreria · **Sforzo:** Basso · **Stato:** ☐
 
 **Problema oggi.** `playwright` è in `optionalDependencies`: npm lo SCARICA comunque
-(~50MB) a ogni `npm install sagecrawl`, anche per un consumer che usa solo la via
+(~50MB) a ogni `npm install crawldna`, anche per un consumer che usa solo la via
 statica/llms-full. Mancano `repository`/`homepage` nel package.json (il remote GitHub
 non è ancora configurato).
 
@@ -1140,7 +1140,7 @@ non è ancora configurato).
 - (b) restare così per l'esperienza out-of-the-box.
   In ogni caso aggiungere `repository`/`homepage`/`bugs` quando il repo è pubblico.
 
-**Criterio di accettazione.** Un consumer statico installa sagecrawl senza scaricare
+**Criterio di accettazione.** Un consumer statico installa crawldna senza scaricare
 Playwright (se si sceglie (a)); `npm publish --dry-run` pulito.
 
 **File:** `package.json`, README (sezione Install).
@@ -1609,8 +1609,8 @@ comunque; (2) dà al reshape uno scheletro vero da cui partire.
 - **DOVE**: al momento della cattura, in `perceive`/`captureHtml` (browser, dove
   `getComputedStyle` è disponibile) — NON in Node (node-html-parser non ha gli stili
   calcolati). Marca gli elementi heading-per-vista con un attributo
-  (`data-sagecrawl-heading="2|3"`) che `extract.mjs` poi converte in `##`/`###` con una
-  regola turndown, come già si fa per `data-sagecrawl-hidden`.
+  (`data-crawldna-heading="2|3"`) che `extract.mjs` poi converte in `##`/`###` con una
+  regola turndown, come già si fa per `data-crawldna-hidden`.
 - **SEGNALE (rapporto, mai una classe)**: un elemento è heading visivo se il suo testo è
   CORTO (≤ ~60 char, una riga), NON dentro `<a>`/`<button>`/cella-tabella/codice, e ha un
   SALTO netto rispetto al corpo attorno — `fontSize ≥ 1.15× del font body locale` OPPURE
@@ -1641,7 +1641,7 @@ inventare l'etichetta "KPI". Quell'ultimo miglio semantico è Fase 2.
 **Fatto (2026-07-04).** Come da design, con queste decisioni:
 - **DOVE**: `markVisualHeadings()` vive in `engine/perceive.mjs` (auto-contenuta) e viene
   INLINED via `toString()` nell'evaluate di `captureHtml` (reveal.mjs) — stessa passata
-  atomica di `data-sagecrawl-hidden` (marca → serializza → smarca), evaluate in forma
+  atomica di `data-crawldna-hidden` (marca → serializza → smarca), evaluate in forma
   STRINGA così non c'è eval annidato che una CSP possa bloccare. In più un GEMELLO Node in
   `extract.mjs` applica le stesse regole agli stili INLINE: copre il path statico e rende
   l'euristica testabile offline (i due gemelli vanno tenuti in sync, è scritto nei commenti).
@@ -1884,7 +1884,7 @@ riuso id consent↔revealer evita di rompere la dismissione cookie (215 test ver
 In precedenza, stesso giorno: #26 recupero heading per peso visivo FATTO:
 i titoli che le app marcano solo VISIVAMENTE (card/sezioni con font più grande o
 bold, mai `<h*>`) diventano `##`/`###`/`####` deterministicamente — marcatura
-in-browser (computed styles, atomica con data-sagecrawl-hidden in captureHtml) +
+in-browser (computed styles, atomica con data-crawldna-hidden in captureHtml) +
 gemello Node sugli stili inline per il path statico, segnale a rapporto di font
 (mai una classe), h* reali mai toccati, zero chiamate modello (identico in
 `--no-ai`). Verificato dal vivo su vuetifyjs.com/en: "Summary"/"Transactions"/
@@ -1904,6 +1904,6 @@ corretti lungo la strada: `direction:null→0` in aiPlanNavigation, shadowing TD
 fetchText. Item aperti rimasti: #6 crawl incrementale → #18 packaging npm → #9
 accessibility-tree. In precedenza: 2026-07-02 sessione architetturale — regola #6,
 no-AI #19 — e revisione ingegneristica #13–#18.
-sagecrawl è uno strumento GENERALE (refdna è solo un consumatore) — vedi
+crawldna è uno strumento GENERALE (refdna è solo un consumatore) — vedi
 "Posizionamento". Aggiorna lo "Stato" (☐ → ✅) man mano che implementi, e segna le
 decisioni prese sotto ogni item._

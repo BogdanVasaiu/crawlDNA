@@ -2,11 +2,11 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "sagecrawl-ui",
+      "name": "crawldna-ui",
       "runtimeExecutable": "node",
       "runtimeArgs": ["bin/cli.mjs", "serve", "--port", "4173"],
       "port": 4173,
-      "autoPort": false
+      "autoPort": true
     }
   ]
 }

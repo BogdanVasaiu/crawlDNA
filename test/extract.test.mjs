@@ -20,7 +20,7 @@ test('basic page: h1 title, prose kept, nav/footer/hidden removed, code fence ke
     <nav><a href="/a">NavA</a><a href="/b">NavB</a></nav>
     <main><h1>Guide</h1><p>Some prose here explaining things in detail for everyone.</p>
     <pre><code class="language-js">const x = 1;</code></pre>
-    <div data-sagecrawl-hidden="1"><p>HIDDEN MODAL TEXT</p></div>
+    <div data-crawldna-hidden="1"><p>HIDDEN MODAL TEXT</p></div>
     <footer>foot</footer></main></body></html>`;
   const { title, markdown } = extractMarkdown(html, { baseUrl: 'https://ex.com/docs/' });
   assert.equal(title, 'Guide');
@@ -419,7 +419,7 @@ test('visual headings never double-mark (nested markers collapse) and empty head
   // What the browser twin can stamp: an outer marked title CONTAINING an inner one.
   // The output must be a SINGLE clean heading, never `#### #### …`.
   const nested = `<main><p>Plenty of ordinary body text here so the picker chooses this as the main content region of the page.</p>
-    <div data-sagecrawl-heading="4"><div data-sagecrawl-heading="3">Logitech G Pro X</div></div>
+    <div data-crawldna-heading="4"><div data-crawldna-heading="3">Logitech G Pro X</div></div>
     <h2>   </h2><p>After.</p></main>`;
   const { markdown } = extractMarkdown(nested, { baseUrl: 'https://x.com' });
   assert.ok(!/#{2,6}\s+#{2,6}/.test(markdown), 'no doubled heading markers');
@@ -550,15 +550,15 @@ test('#26 repeated same-shape rows (transaction feed) stay #25 bullets, never h4
   assert.ok(!/^#{1,6}\s/m.test(markdown), 'a bold name inside a data row must not become a heading');
 });
 
-test('#26 browser-stamped data-sagecrawl-heading converts even with no styles at all', () => {
+test('#26 browser-stamped data-crawldna-heading converts even with no styles at all', () => {
   const html = `<html><body><main>
     <p>Page text captured in the browser, where computed styles marked the title.</p>
-    <div data-sagecrawl-heading="2">Injected Title</div>
+    <div data-crawldna-heading="2">Injected Title</div>
     <p>Content following the injected title in the captured state.</p>
   </main></body></html>`;
   const { markdown } = extractMarkdown(html);
   assert.ok(/^## Injected Title$/m.test(markdown), 'the marker IS the contract with the browser path');
-  assert.ok(!markdown.includes('data-sagecrawl-heading'), 'the marker never leaks into the output');
+  assert.ok(!markdown.includes('data-crawldna-heading'), 'the marker never leaks into the output');
 });
 
 test('#26 a wrapper block whose big text lives in an inline child is still caught', () => {

@@ -22,11 +22,11 @@ test('parseRobots: the most specific matching User-agent group wins over *', () 
     'Disallow: /private/',
     'Crawl-delay: 10',
     '',
-    'User-agent: sagecrawl',
+    'User-agent: crawldna',
     'Disallow: /internal/',
     'Crawl-delay: 2',
   ].join('\n');
-  const mine = parseRobots(txt, 'sagecrawl/0.1');
+  const mine = parseRobots(txt, 'crawldna/0.1');
   assert.deepEqual(mine.rules, [{ type: 'disallow', path: '/internal/' }]);
   assert.equal(mine.crawlDelay, 2);
   const other = parseRobots(txt, 'somebot');
@@ -36,7 +36,7 @@ test('parseRobots: the most specific matching User-agent group wins over *', () 
 
 test('parseRobots: consecutive User-agent lines share one group; comments ignored', () => {
   const txt = ['User-agent: a', 'User-agent: *', 'Disallow: /x # trailing comment', '# full comment'].join('\n');
-  assert.deepEqual(parseRobots(txt, 'sagecrawl').rules, [{ type: 'disallow', path: '/x' }]);
+  assert.deepEqual(parseRobots(txt, 'crawldna').rules, [{ type: 'disallow', path: '/x' }]);
 });
 
 test('isAllowed: longest match wins, Allow beats Disallow on a tie, wildcards + $ anchor', () => {

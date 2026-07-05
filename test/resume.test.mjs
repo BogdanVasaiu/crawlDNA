@@ -41,14 +41,14 @@ let envCacheDir;
 before(async () => {
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${server.address().port}`;
-  tmp = await mkdtemp(path.join(os.tmpdir(), 'sagecrawl-resume-test-'));
+  tmp = await mkdtemp(path.join(os.tmpdir(), 'crawldna-resume-test-'));
   // The zero-writes assertions must not be defeated by ambient config.
-  envCacheDir = process.env.SAGECRAWL_CACHE_DIR;
-  delete process.env.SAGECRAWL_CACHE_DIR;
+  envCacheDir = process.env.CRAWLDNA_CACHE_DIR;
+  delete process.env.CRAWLDNA_CACHE_DIR;
 });
 after(async () => {
   server.close();
-  if (envCacheDir !== undefined) process.env.SAGECRAWL_CACHE_DIR = envCacheDir;
+  if (envCacheDir !== undefined) process.env.CRAWLDNA_CACHE_DIR = envCacheDir;
   await rm(tmp, { recursive: true, force: true });
 });
 
@@ -92,13 +92,13 @@ test('control: the uninterrupted crawl keeps all three pages (in memory, no save
 test('zero writes when saving is off', async () => {
   // The control crawl above ran with save off from the repo cwd; prove the
   // library wrote nothing by crawling from a pristine cwd and checking it.
-  const cleanCwd = await mkdtemp(path.join(os.tmpdir(), 'sagecrawl-nosave-'));
+  const cleanCwd = await mkdtemp(path.join(os.tmpdir(), 'crawldna-nosave-'));
   const prevCwd = process.cwd();
   process.chdir(cleanCwd);
   try {
     const { result } = await runCrawl({ save: false });
     assert.equal(result.scans[0].pages.length, 3);
-    await assert.rejects(stat(path.join(cleanCwd, '.sagecrawl')), 'no cache dir may appear');
+    await assert.rejects(stat(path.join(cleanCwd, '.crawldna')), 'no cache dir may appear');
   } finally {
     process.chdir(prevCwd);
     await rm(cleanCwd, { recursive: true, force: true });

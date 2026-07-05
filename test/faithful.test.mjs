@@ -72,7 +72,7 @@ test('prose-only output checks nothing and passes', () => {
 test('banner renders and strips mechanically', () => {
   const v = verifyValues("`'Close'` and 9999", [SOURCE]);
   const banner = fidelityBanner(v);
-  assert.ok(banner.startsWith('> ⚠️ **Fidelity check (sagecrawl):**'));
+  assert.ok(banner.startsWith('> ⚠️ **Fidelity check (crawldna):**'));
   const flagged = banner + '\n\n' + 'real content';
   assert.equal(stripFidelityBanner(flagged), 'real content');
   assert.equal(stripFidelityBanner('no banner here'), 'no banner here');

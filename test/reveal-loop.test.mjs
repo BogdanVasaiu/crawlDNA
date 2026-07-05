@@ -31,7 +31,7 @@ function makePage(model) {
     async goBack() {},
     async goto() {},
     locator: (sel) => {
-      const m = sel.match(/data-sagecrawl-id="(\d+)"/);
+      const m = sel.match(/data-crawldna-id="(\d+)"/);
       const id = m ? Number(m[1]) : -1;
       return {
         first: () => ({

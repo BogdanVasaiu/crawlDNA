@@ -1,6 +1,6 @@
 // The LLM transport layer — the ONE place that talks to a model provider.
 //
-// sagecrawl's judgment layer (src/engine/decide.mjs) and reshape (src/reshape.mjs)
+// crawldna's judgment layer (src/engine/decide.mjs) and reshape (src/reshape.mjs)
 // are provider-agnostic: they call `chat(llm, system, user)` and never know which
 // backend answered. Two backends are supported:
 //
@@ -143,7 +143,7 @@ export function llmDisabled(llm) {
  * Normalise raw options into a `{ provider, model, baseUrl, apiKey }` descriptor.
  * Backward compatible: an absent provider means 'ollama', and `ollamaHost` keeps
  * working. For the 'openai' provider, the API key falls back to the environment
- * (SAGECRAWL_API_KEY, then OPENAI_API_KEY) so it never has to be put on the CLI.
+ * (CRAWLDNA_API_KEY, then OPENAI_API_KEY) so it never has to be put on the CLI.
  *
  * `noAi: true` wins over everything: it yields the provider-'none' descriptor —
  * the crawl runs on its deterministic fallbacks (heuristic reveal, keep whole,
@@ -171,7 +171,7 @@ export function resolveLlm(options = {}) {
 
   if (provider === 'openai') {
     const apiKey =
-      options.apiKey || process.env.SAGECRAWL_API_KEY || process.env.OPENAI_API_KEY || '';
+      options.apiKey || process.env.CRAWLDNA_API_KEY || process.env.OPENAI_API_KEY || '';
     return { provider, model, embedModel, baseUrl: openaiBase(options.baseUrl), apiKey };
   }
 

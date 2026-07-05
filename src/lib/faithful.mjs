@@ -150,13 +150,13 @@ export function fidelityBanner(f) {
       ? `most of this file (${f.unverified.length} of ${f.total} checked values) could NOT be found in the crawled sources`
       : `${f.unverified.length} of ${f.total} checked value(s) were not found in the crawled sources`;
   return (
-    `> ⚠️ **Fidelity check (sagecrawl):** ${head} — the model may have invented them: ${shown}${more}.\n` +
+    `> ⚠️ **Fidelity check (crawldna):** ${head} — the model may have invented them: ${shown}${more}.\n` +
     `> Do not trust these values without checking the original extraction.`
   );
 }
 
 /** Matches a fidelity banner at the start of a file (through its trailing blank line). */
-export const FIDELITY_BANNER_RE = /^> ⚠️ \*\*Fidelity check \(sagecrawl\):\*\*[^\n]*\n> [^\n]*\n\n/;
+export const FIDELITY_BANNER_RE = /^> ⚠️ \*\*Fidelity check \(crawldna\):\*\*[^\n]*\n> [^\n]*\n\n/;
 
 /** Remove a leading fidelity banner, e.g. before re-feeding a produced file to the
  *  model as context (the warning is for the USER, not content to iterate on). */

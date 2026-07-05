@@ -1,6 +1,6 @@
 node_modules/
 out/
-.sagecrawl/
+.crawldna/
 *.log
 .DS_Store
 .env

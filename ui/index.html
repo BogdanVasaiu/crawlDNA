@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>sagecrawl</title>
+<title>crawldna</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&family=DM+Mono:wght@400;500&display=swap');
 
@@ -26,8 +26,7 @@
          overflow-x:clip; overflow-wrap:break-word;
          background-image:
            radial-gradient(820px 460px at 10% -8%, rgba(34,227,163,.06), transparent 60%),
-           radial-gradient(760px 480px at 102% -4%, rgba(14,165,233,.06), transparent 55%);
-         background-attachment:fixed; }
+           radial-gradient(760px 480px at 102% -4%, rgba(14,165,233,.06), transparent 55%); }
   ::-webkit-scrollbar { width:8px; height:8px; }
   ::-webkit-scrollbar-track { background:transparent; }
   ::-webkit-scrollbar-thumb { background:var(--b2); border-radius:99px; border:2px solid transparent; background-clip:padding-box; }
@@ -104,6 +103,17 @@
   .chk label { margin:0; color:var(--t1); cursor:pointer; }
   .muted { color:var(--t3); font-size:12px; }
   .hint { color:var(--t3); font-size:11.5px; margin:4px 0 14px; line-height:1.5; }
+
+  /* numbered section headers in the setup card — a "1 → 2 → 3" flow the eye can
+     parse at a glance (Links → What to extract → AI model) */
+  .sec { display:flex; align-items:center; gap:9px; margin:20px 0 11px; }
+  .sec .n { display:inline-flex; align-items:center; justify-content:center; width:19px; height:19px; flex-shrink:0;
+            border-radius:50%; background:var(--a-dim); color:var(--a); font-family:var(--mono);
+            font-size:10.5px; font-weight:700; box-shadow:0 0 0 1px var(--a-border); }
+  .sec label, .sec .sec-t { margin:0; display:inline; font-size:11.5px; font-weight:600; color:var(--t1);
+            text-transform:uppercase; letter-spacing:.05em; }
+  .sec .sec-hint { margin-left:auto; color:var(--t4); font-size:10.5px; font-weight:400; min-width:0;
+            overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding-left:10px; }
 
   /* ---- collapsible "what do these options do?" guide ---- */
   details.opts-guide { margin:14px 0 0; background:var(--s3); border:1px solid var(--b1); border-radius:var(--r-sm); }
@@ -222,7 +232,7 @@
   .link-tab { display:inline-flex; align-items:center; gap:7px; padding:7px 14px; border:none;
               border-radius:var(--r-sm); background:transparent; color:var(--t3);
               font-family:var(--mono); font-size:11px; font-weight:500; cursor:pointer;
-              white-space:nowrap; transition:all .15s; max-width:240px; }
+              white-space:nowrap; transition:all .15s; max-width:300px; }
   .link-tab .lt-name { overflow:hidden; text-overflow:ellipsis; }
   .link-tab:hover { color:var(--t1); background:rgba(255,255,255,.05); transform:none; }
   .link-tab.active { color:var(--a); background:var(--s5); font-weight:600; box-shadow:0 1px 4px rgba(0,0,0,.6), 0 0 0 1px var(--b3); }
@@ -252,15 +262,18 @@
              background:linear-gradient(90deg,var(--a2) 0%,var(--a) 100%); box-shadow:0 0 10px var(--a-glow);
              transition:width .45s cubic-bezier(.4,0,.2,1); position:relative; overflow:hidden; }
   .bar > i::after { content:''; position:absolute; inset:0;
-                    background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);
-                    animation:shine 1.6s linear infinite; }
+                    background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent); }
+  /* the progress shine only animates during a LIVE crawl — no constant repaint
+     (and no wasted GPU work) while viewing a finished or saved run */
+  #view-run.live .bar > i::after { animation:shine 1.6s linear infinite; }
   @keyframes shine { 0%{ transform:translateX(-100%);} 100%{ transform:translateX(100%);} }
 
-  /* body: main column (active link) + a single right panel (Activity/Tree/Reshape) */
-  .run-body { flex:1; display:grid; grid-template-columns:1fr clamp(340px, 34%, 460px); min-height:0; }
+  /* body: three fixed roles — the document you're reading (left), where you pick a
+     document (middle file browser), and the Activity/Tree/Reshape tools (right). */
+  .run-body { flex:1; display:grid; grid-template-columns:1fr 300px clamp(320px, 30%, 430px); min-height:0; }
   .run-main { display:flex; flex-direction:column; min-height:0; overflow:hidden; }
   /* slim context line for the active link — replaces the old bulky subhead */
-  .ctx { display:flex; align-items:center; gap:8px; flex-shrink:0; margin:13px 24px 0; min-width:0; font-size:11.5px; }
+  .ctx { display:flex; align-items:center; gap:8px; flex-shrink:0; margin:13px 24px 13px 24px; min-width:0; font-size:11.5px; }
   .ctx:empty { display:none; }
   .ctx .ctx-ico { flex-shrink:0; font-size:11px; opacity:.9; }
   .ctx a { color:var(--t2); font-family:var(--mono); text-decoration:none; min-width:0;
@@ -269,67 +282,44 @@
   .ctx .ctx-task { color:var(--t3); flex-shrink:1; min-width:0; max-width:50%; padding-left:9px; margin-left:1px;
                    border-left:1px solid var(--b2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
-  /* file tabs (segmented control) — TWO groups with distinct identities:
-     green = verbatim crawl output · violet = AI-reshaped files (from the chat).
-     The same colour language is used on the chat chips and the viewer badge, so
-     "which document am I looking at?" always has one obvious answer. */
-  .files { display:flex; gap:3px; flex-wrap:nowrap; overflow-x:auto; scrollbar-width:thin;
-           align-items:center; flex-shrink:0; min-width:0;
-           margin:14px 24px 0; padding:6px; background:var(--s3); border:1px solid var(--b2); border-radius:var(--r); }
-  .files .label { color:var(--t4); font-size:9px; text-transform:uppercase; letter-spacing:.09em; margin:0 8px 0 5px; font-weight:600; flex-shrink:0; }
-  .files .divider { flex-shrink:0; }
-  .files .chip { flex-shrink:0; }
-  .files .label.rs-label { color:var(--man); opacity:.75; }
-  .files .divider { width:1px; align-self:stretch; margin:2px 6px; background:var(--b2); }
-  .files .chip { padding:7px 14px; border:none; border-radius:var(--r-sm); background:transparent; cursor:pointer;
-                 font-family:var(--mono); font-size:11px; font-weight:500; color:var(--t3); transition:all .15s;
-                 max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .files .chip:hover { color:var(--t1); background:rgba(255,255,255,.05); }
-  .files .chip.active { color:var(--a); background:var(--s5); font-weight:600; box-shadow:0 1px 4px rgba(0,0,0,.6), 0 0 0 1px var(--b3); }
-  .files .chip.rs { color:var(--t3); }
-  .files .chip.rs:hover { color:#a5b4fc; }
-  .files .chip.rs.active { color:var(--man); background:var(--s5); font-weight:600; box-shadow:0 1px 4px rgba(0,0,0,.6), 0 0 0 1px rgba(129,140,248,.35); }
-  .files .chip .chip-warn { color:var(--amb); margin-left:5px; }
-  /* the files-bar toggle for the reshaped-documents drawer (violet identity) */
-  .files .chip.rs-toggle { color:var(--man); }
-  .files .chip.rs-toggle:hover { color:#a5b4fc; background:rgba(129,140,248,.07); }
-  .files .chip.rs-toggle.open { color:var(--man); background:var(--s5); font-weight:600;
-                                box-shadow:0 1px 4px rgba(0,0,0,.6), 0 0 0 1px rgba(129,140,248,.35); }
-
-  /* reshaped documents live in a DRAWER under the bar, not in the bar: they can
-     grow with every chat turn while the bar must stay one scrollable line */
-  .rs-drawer { flex-shrink:0; margin:8px 24px 0; padding:8px 10px; background:var(--s2);
-               border:1px solid rgba(129,140,248,.28); border-radius:var(--r); animation:extIn .18s ease; }
-  .rsd-head { display:flex; align-items:center; gap:8px; padding:2px 4px 8px; }
-  .rsd-title { color:var(--man); font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.08em; }
-  .rsd-count { color:var(--t4); font-family:var(--mono); font-size:10px; }
-  .rsd-close { margin-left:auto; padding:2px 10px; font-size:10px; color:var(--t3); }
-  .rsd-close:hover { color:var(--man); transform:none; }
-  .rsd-list { display:flex; flex-direction:column; gap:2px; max-height:180px; overflow:auto; scrollbar-width:thin; }
-  .rsd-item { display:flex; align-items:center; gap:9px; padding:6px 9px; border:none; border-radius:var(--r-sm);
-              background:transparent; color:var(--t3); font-family:var(--mono); font-size:11px; cursor:pointer;
-              text-align:left; transition:all .15s; min-width:0; width:100%; }
-  .rsd-item:hover { color:#a5b4fc; background:rgba(129,140,248,.07); transform:none; }
-  .rsd-item.active { color:var(--man); background:var(--s5); box-shadow:0 0 0 1px rgba(129,140,248,.35); }
-  .rsd-item .rsd-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .rsd-item .rsd-meta { margin-left:auto; flex-shrink:0; color:var(--t4); font-size:10px; }
-  .rsd-item .rsd-warn { color:var(--amb); flex-shrink:0; }
-
-  /* which document is open — a slim identity bar the viewer can never lose */
-  .doc-head { display:flex; align-items:center; gap:9px; flex-shrink:0; min-width:0;
-              margin:10px 24px 0; padding:7px 12px; background:var(--s2);
-              border:1px solid var(--b1); border-radius:var(--r-sm); font-size:11.5px; }
-  .doc-head.hidden { display:none; }
-  .doc-head .dh-name { font-family:var(--mono); font-size:11.5px; color:var(--t1); font-weight:600;
-                       min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .doc-head .dh-badge { flex-shrink:0; font-size:9px; font-weight:700; letter-spacing:.07em;
-                        text-transform:uppercase; padding:2.5px 9px; border-radius:99px; }
-  .doc-head .dh-badge.crawl { color:var(--a); background:var(--a-dim); border:1px solid var(--a-border); }
-  .doc-head .dh-badge.reshape { color:#a5b4fc; background:rgba(129,140,248,.10); border:1px solid rgba(129,140,248,.3); }
-  .doc-head .dh-meta { color:var(--t4); font-family:var(--mono); font-size:10.5px; flex-shrink:0; }
-  .doc-head .dh-warn { color:var(--amb); font-size:10.5px; flex-shrink:0; }
-  .doc-head .dh-back { margin-left:auto; flex-shrink:0; padding:4px 11px; font-size:10.5px; color:var(--t3); }
-  .doc-head .dh-back:hover { color:var(--a); border-color:var(--a-border); transform:none; }
+  /* ---- middle column: the OUTPUT file browser ----
+     ONE place to pick a document — verbatim crawl output OR reshaped files, chosen
+     with a tab. Styled like the tools panel; the left column just shows the pick. */
+  .fdrawer { display:flex; flex-direction:column; min-height:0; background:var(--s1); border-left:1px solid var(--b1); }
+  .fd-tabs { display:flex; gap:3px; padding:9px 10px; border-bottom:1px solid var(--b1); background:var(--s2); flex-shrink:0; }
+  .fd-tab { flex:1; min-width:0; padding:7px 8px; border:1px solid transparent; border-radius:var(--r-sm); background:transparent;
+            color:var(--t3); font-size:11px; font-weight:600; cursor:pointer; display:flex; align-items:center; justify-content:center;
+            gap:6px; transition:color .15s, background .15s, border-color .15s; }
+  .fd-tab:hover { color:var(--t1); background:rgba(255,255,255,.04); transform:none; }
+  .fd-tab.on { color:var(--a); background:var(--s4); border-color:var(--b2); box-shadow:0 1px 4px rgba(0,0,0,.5); }
+  .fd-tab#fd-reshape.on { color:var(--man); border-color:rgba(129,140,248,.35); }
+  .fd-tab .fd-n { font-family:var(--mono); font-size:9.5px; padding:1px 6px; border-radius:99px; background:var(--b2); color:var(--t3); font-weight:600; }
+  .fd-tab.on .fd-n { color:inherit; background:rgba(255,255,255,.08); }
+  .fd-tab .fd-n:empty { display:none; }
+  .fd-list { flex:1; min-height:0; overflow:auto; padding:8px; display:flex; flex-direction:column; gap:2px; scrollbar-width:thin; }
+  .fd-item { display:flex; align-items:center; gap:9px; padding:8px 9px; border:none; border-radius:var(--r-sm);
+             background:transparent; color:var(--t3); font-family:var(--mono); font-size:11px; cursor:pointer;
+             text-align:left; transition:all .15s; min-width:0; width:100%; }
+  .fd-item::before { content:'▤'; opacity:.7; flex-shrink:0; font-size:10px; color:var(--a); }
+  .fd-item:hover { color:var(--t1); background:rgba(255,255,255,.05); transform:none; }
+  .fd-item.active { color:var(--a); background:var(--s5); box-shadow:0 0 0 1px var(--a-border); }
+  .fdrawer[data-group="reshape"] .fd-item::before { color:var(--man); }
+  .fdrawer[data-group="reshape"] .fd-item:hover { color:#a5b4fc; background:rgba(129,140,248,.07); }
+  .fdrawer[data-group="reshape"] .fd-item.active { color:var(--man); box-shadow:0 0 0 1px rgba(129,140,248,.35); }
+  /* the filename fades out ("a scomparsa") at the right edge instead of a hard
+     ellipsis; hovering the row un-truncates it — the full name wraps into view.
+     flex:1 makes short names sit clear of the fade zone, so only names that really
+     overflow get faded (a plain fade would dim every name's tail). */
+  .fd-item .fd-name { flex:1; min-width:0; overflow:hidden; white-space:nowrap;
+                      -webkit-mask-image:linear-gradient(90deg,#000 78%,transparent 100%);
+                      mask-image:linear-gradient(90deg,#000 78%,transparent 100%); }
+  .fd-item:hover .fd-name { white-space:normal; overflow:visible; word-break:break-all;
+                      -webkit-mask-image:none; mask-image:none; }
+  .fd-item .fd-meta { flex-shrink:0; color:var(--t4); font-size:10px; }
+  .fd-item .fd-warn { color:var(--amb); flex-shrink:0; }
+  .fd-empty { margin:auto; padding:22px 14px; color:var(--t4); font-size:11px; text-align:center; line-height:1.65; }
+  /* (the old crawl FILES bar, reshape slide-over drawer and doc-head identity bar
+     were replaced by the middle file-browser column above.) */
 
   /* viewer — scrolls independently of the page */
   .viewer { flex:1; min-height:0; overflow:auto; padding:24px 28px 48px; }
@@ -364,6 +354,10 @@
 
   /* ===================== rendered markdown ===================== */
   .md-body { max-width:820px; margin:0 auto; font-size:13.5px; line-height:1.72; color:var(--t2); }
+  /* a large extraction renders to 100k+ nodes; let the browser skip layout/paint of
+     the blocks scrolled off-screen so the viewer stays smooth. 'auto' intrinsic-size
+     means each block's real height is remembered after it's first painted. */
+  .md-body > * { content-visibility:auto; contain-intrinsic-size:auto 44px; }
   .md-body > :first-child { margin-top:0; }
   .md-body h1 { font-size:24px; color:var(--t1); font-weight:700; margin:1.1em 0 .5em; line-height:1.25;
                 letter-spacing:-.02em; padding-bottom:.3em; border-bottom:1px solid var(--b1); }
@@ -505,10 +499,43 @@
      WHAT the checkbox turned off (and one click brings it back) */
   #aiSetup.ai-off { opacity:.4; pointer-events:none; user-select:none; }
 
+  /* ===================== lightbox (click an image to view it big) ========== */
+  .md-body img { cursor:zoom-in; }
+  .lightbox { position:fixed; inset:0; z-index:200; display:flex; align-items:center; justify-content:center;
+              padding:48px 56px; background:rgba(4,4,6,.84); backdrop-filter:blur(6px); animation:lbIn .16s ease; }
+  @keyframes lbIn { from { opacity:0; } to { opacity:1; } }
+  .lb-stage { margin:0; display:flex; flex-direction:column; align-items:center; gap:13px; max-width:100%; max-height:100%; min-width:0; }
+  .lb-img { max-width:min(94vw,1400px); max-height:82vh; width:auto; height:auto; object-fit:contain;
+            border-radius:var(--r-sm); background:var(--s2); border:1px solid var(--b2); box-shadow:0 24px 70px rgba(0,0,0,.6);
+            animation:lbImg .18s ease; }
+  @keyframes lbImg { from { opacity:0; transform:scale(.98); } to { opacity:1; transform:none; } }
+  .lb-cap { display:flex; align-items:center; justify-content:center; flex-wrap:wrap; gap:6px 13px; max-width:94vw;
+            color:var(--t2); font-size:12px; font-family:var(--mono); text-align:center; overflow-wrap:anywhere; }
+  .lb-cap .lb-alt { color:var(--t3); min-width:0; overflow:hidden; text-overflow:ellipsis; max-width:70vw; white-space:nowrap; }
+  .lb-cap .lb-count { color:var(--t4); flex-shrink:0; }
+  .lb-cap a { color:var(--a); text-decoration:none; flex-shrink:0; }
+  .lb-cap a:hover { text-decoration:underline; }
+  .lb-close { position:fixed; top:16px; right:18px; width:38px; height:38px; padding:0; font-size:17px; line-height:1;
+              display:flex; align-items:center; justify-content:center; border-radius:50%;
+              background:rgba(20,20,23,.7); border:1px solid var(--b2); color:var(--t2); }
+  .lb-close:hover { color:var(--t1); background:var(--s4); border-color:var(--b3); transform:none; }
+  .lb-nav { position:fixed; top:50%; transform:translateY(-50%); width:46px; height:70px; padding:0; font-size:26px; line-height:1;
+            display:flex; align-items:center; justify-content:center; border-radius:var(--r);
+            background:rgba(20,20,23,.6); border:1px solid var(--b2); color:var(--t2); }
+  .lb-nav:hover { color:var(--t1); background:var(--s4); border-color:var(--b3); transform:translateY(-50%); }
+  .lb-prev { left:14px; } .lb-next { right:14px; }
+  @media (max-width:720px) {
+    .lightbox { padding:16px; }
+    .lb-img { max-width:96vw; max-height:74vh; }
+    .lb-nav { width:38px; height:56px; font-size:22px; }
+    .lb-prev { left:6px; } .lb-next { right:6px; }
+    .lb-cap .lb-alt { max-width:60vw; }
+  }
+
   /* ===================== responsive ===================== */
   /* ---- tablet / narrow desktop ---- */
   @media (max-width:1060px) {
-    .run-body { grid-template-columns:1fr clamp(300px, 38%, 400px); }
+    .run-body { grid-template-columns:1fr 250px clamp(280px, 30%, 370px); }
     .stat { padding:0 10px; }
     .prog-stack { width:120px; }
   }
@@ -544,25 +571,23 @@
     .actions .primary { width:100%; padding:13px 20px; }
     .run .when { display:none; }  /* the URL column: redundant with the title on a phone */
 
-    /* run view: main on top, panel below — both usable */
+    /* run view stacks: viewer, then the file browser, then the tools panel */
     .runview { height:auto; min-height:calc(100dvh - 50px); }
-    .run-body { grid-template-columns:1fr; grid-template-rows:minmax(46dvh, auto) auto; }
-    .run-main { min-height:46dvh; overflow:visible; }
+    .run-body { grid-template-columns:1fr; grid-template-rows:minmax(42dvh, auto) auto auto; }
+    .run-main { min-height:42dvh; overflow:visible; }
+    .fdrawer { border-left:none; border-top:2px solid var(--b2); max-height:44dvh; }
     .side { border-left:none; border-top:2px solid var(--b2); min-height:52dvh; }
     /* here the PAGE scrolls (runview is auto-height): the viewer must not be a
        scroll container or the sticky .ext-src would bind to it and never stick */
     .viewer { padding:16px 14px 36px; overflow:visible; }
     .ext-src { top:50px; } /* stick just below the sticky topbar */
-    .ctx, .files, .doc-head { margin-left:14px; margin-right:14px; }
+    .ctx { margin-left:14px; margin-right:14px; }
     .stats { width:100%; justify-content:space-between; }
     .stat { padding:0 6px; text-align:left; }
     .prog-stack { flex-basis:100%; }
     .runtop-right { row-gap:8px; flex-wrap:wrap; }
     .rs-msg { max-width:100%; }
-    button, .files .chip, .link-tab { -webkit-tap-highlight-color:transparent; }
-    /* the open document's name gets its own full-width line; badge/size/actions below */
-    .doc-head { flex-wrap:wrap; row-gap:7px; }
-    .doc-head .dh-name { flex:1 1 100%; order:-1; white-space:normal; overflow-wrap:anywhere; }
+    button, .fd-item, .link-tab { -webkit-tap-highlight-color:transparent; }
   }
 </style>
 </head>
@@ -570,7 +595,7 @@
 <header>
   <div class="brand">
     <span class="brand-mark"></span>
-    <h1>sagecrawl</h1>
+    <h1>crawldna</h1>
     <span class="brand-tag">websites → clean markdown</span>
   </div>
   <button id="back" class="ghost hidden">← back to runs</button>
@@ -581,10 +606,9 @@
 <section class="setup" id="view-setup">
   <div class="card">
     <h2>New crawl</h2>
-    <p class="hint">Give it one or more links and a plain-English task describing <b>what to extract</b>.
-      sagecrawl opens each page in a real browser, reveals hidden content (tabs, accordions, “load more”),
-      and keeps only what your task asks for — <b>verbatim</b>. Turning it into tables, splits or filtered
-      subsets comes later, in <b>Reshape</b>.</p>
+    <p class="hint">Give crawldna a few links and a plain-English task. It opens each page in a real
+      browser, reveals hidden content (tabs, accordions, “load more”) and keeps exactly what you ask for
+      — <b>verbatim</b>. Turn it into tables or subsets later, in <b>Reshape</b>.</p>
 
     <!-- #23 — the first choice comes first: no-AI excludes everything task-related
          below it (task boxes, "What to extract", focus/embedding), so it sits on top. -->
@@ -600,16 +624,16 @@
       <i>more</i> pages and time, not less. Contain it with Max pages or Include/Exclude.
     </p>
 
-    <div class="chk" id="sharedChk">
+    <div class="sec"><span class="n">1</span><label id="rowsLabel">Links &amp; tasks</label>
+      <span class="sec-hint">a link, and what to extract from it</span></div>
+    <div class="chk" id="sharedChk"  style="margin:0 0 6px">
       <input type="checkbox" id="sharedToggle" />
       <label for="sharedToggle">Apply one shared task to all links</label>
     </div>
-    <div id="sharedWrap" class="hidden">
+    <div id="sharedWrap" class="hidden"  style="margin:0 0 20px">
       <label>Shared task</label>
       <input id="sharedTask" placeholder="Extract all documentation" />
     </div>
-
-    <label id="rowsLabel">Links &amp; tasks</label>
     <div id="rows"></div>
     <button id="addRow">+ add link</button>
 
@@ -618,14 +642,16 @@
            wording. The UI always sends one of the two real modes ('auto' is the
            library-only backward-compat value). Under no-AI (#23) it stays visible,
            locked on 'Everything': that IS what a no-model crawl does. -->
+      <div class="sec"><span class="n">2</span><span class="sec-t">What to extract</span></div>
       <div id="modeWrap">
-        <label>What to extract</label>
         <div class="seg" id="mode-seg" style="margin-bottom:6px">
           <button type="button" class="seg-btn active" data-mode="complete">Everything · the whole site</button>
           <button type="button" class="seg-btn" data-mode="targeted" id="mode-targeted">Only what the task asks</button>
         </div>
         <p class="hint" id="modeHint" style="margin:0 0 14px"></p>
       </div>
+      <div class="sec"><span class="n">3</span><span class="sec-t">AI model</span>
+        <span class="sec-hint">runs the task — pick a provider &amp; model</span></div>
       <div id="aiSetup">
       <label>AI provider</label>
       <div class="seg" id="provider-seg">
@@ -756,7 +782,7 @@
             <dt>Respect robots.txt</dt>
             <dd>Skips URLs the site's <code>robots.txt</code> disallows — each skip shows up
               as a warning, never silently — and honours its <code>Crawl-delay</code>.
-              Off by default: like wget, sagecrawl is user-directed.</dd>
+              Off by default: like wget, crawldna is user-directed.</dd>
             <dt>Embedding model</dt>
             <dd>Optional, from the same provider as the main model (e.g.
               <code>nomic-embed-text</code> on Ollama — <code>ollama pull nomic-embed-text</code> —
@@ -776,10 +802,8 @@
         </div>
       </details>
       <p class="muted" style="margin:14px 0 0">
-        Every run is saved automatically. The crawl gives you one faithful, <b>verbatim</b>
-        <code>.md</code> per link — exactly the content your task asked for, nothing reshaped.
-        To turn it into tables, splits or filtered subsets, open the saved link and use
-        <b>Reshape</b> — a chat over the extraction you can reuse any number of times.
+        Every run is saved automatically — one <b>verbatim</b> <code>.md</code> per link. Reshape it
+        into tables, splits or filtered subsets later, from the saved run.
       </p>
     </div>
 
@@ -834,27 +858,22 @@
 
   <div class="run-body" id="run-body">
     <!-- active link: its files + scrollable viewer -->
+    <!-- left: the open document, nothing else -->
     <div class="run-main">
       <div class="ctx" id="run-ctx"></div>
-      <div class="files" id="run-files"><span class="label">files</span><span class="muted">no files yet</span></div>
-      <!-- reshaped documents: a drawer opened from the bar's violet toggle — one
-           row per document, with the fidelity ⚠ and an arrow to close -->
-      <div class="rs-drawer hidden" id="rs-drawer">
-        <div class="rsd-head">
-          <span class="rsd-title">▤ reshaped documents</span>
-          <span class="rsd-count" id="rsd-count"></span>
-          <button type="button" class="ghost rsd-close" id="rsd-close" title="Close the drawer">▲ close</button>
-        </div>
-        <div class="rsd-list" id="rsd-list"></div>
-      </div>
-      <!-- identity of the OPEN document: name · origin badge (crawl/reshape) · size.
-           Without it, opening a reshape file from the chat silently swapped the viewer
-           while the crawl file's tab still looked active — impossible to tell apart. -->
-      <div class="doc-head hidden" id="run-doc"></div>
       <div class="viewer" id="run-viewer"><div class="empty">Select a file to view its Markdown.</div></div>
     </div>
 
-    <!-- right panel: Activity log · exploration Tree · Reshape (all reachable) -->
+    <!-- middle: the OUTPUT file browser — pick a crawl or reshaped file to view -->
+    <aside class="fdrawer hidden" id="run-fdrawer">
+      <div class="fd-tabs" role="tablist">
+        <button type="button" class="fd-tab on" id="fd-crawl" data-group="crawl">Crawl output <span class="fd-n" id="fd-n-crawl"></span></button>
+        <button type="button" class="fd-tab" id="fd-reshape" data-group="reshape">Reshape <span class="fd-n" id="fd-n-reshape"></span></button>
+      </div>
+      <div class="fd-list" id="fd-list"></div>
+    </aside>
+
+    <!-- right: the tools — Activity log · exploration Tree · Reshape chat -->
     <aside class="side hidden" id="run-side">
       <div class="side-tabs" role="tablist">
         <button type="button" class="side-tab on" id="st-activity" data-tab="activity">Activity</button>
@@ -886,8 +905,8 @@
           <div class="rs-head">
             <div class="rs-title">Reshape</div>
             <div class="rs-sub">Ask for tables, splits or filtered subsets of this link’s extraction.
-              Each answer is saved as a new <b style="color:#a5b4fc">reshaped</b> file next to the
-              <b style="color:var(--a)">crawl output</b> — crawl once, reshape many times.</div>
+              Each answer is saved as a <b style="color:#a5b4fc">reshaped</b> file — open it from the
+              <b style="color:#a5b4fc">Reshape</b> tab of the file browser. Crawl once, reshape many times.</div>
           </div>
           <div class="rs-log" id="rs-log"></div>
           <form class="rs-input" id="rs-form">
@@ -899,6 +918,17 @@
     </aside>
   </div>
 </section>
+
+<!-- ===== Lightbox: click any image in the viewer to see it big ===== -->
+<div class="lightbox hidden" id="lightbox" role="dialog" aria-modal="true" aria-label="Image viewer">
+  <button type="button" class="lb-close" id="lb-close" aria-label="Close">✕</button>
+  <button type="button" class="lb-nav lb-prev" id="lb-prev" aria-label="Previous image">‹</button>
+  <button type="button" class="lb-nav lb-next" id="lb-next" aria-label="Next image">›</button>
+  <figure class="lb-stage" id="lb-stage">
+    <img class="lb-img" id="lb-img" alt="" />
+    <figcaption class="lb-cap" id="lb-cap"></figcaption>
+  </figure>
+</div>
 
 <script>
 const $ = (id) => document.getElementById(id);
@@ -926,11 +956,15 @@ function escAttr(s) { return esc(s).replace(/"/g, '&quot;'); }
 // Images: a lone image becomes a <figure class="md-figure"> (medium size); two or
 // more adjacent images (consecutive image-only lines, blank lines allowed between
 // them) become a <div class="md-gallery"> that lays them out in a compact row.
-function renderMarkdown(raw) {
+function renderMarkdown(raw, opts) {
   let md = String(raw || '');
   let metaHtml = '';
-  const fm = md.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
-  if (fm) { metaHtml = '<details class="fm"><summary>metadata</summary><pre>' + esc(fm[1]) + '</pre></details>'; md = md.slice(fm[0].length); }
+  // chunked rendering (renderMarkdownProgressive) extracts front-matter once itself
+  // and passes { frontMatter: false } so a body chunk starting with '---' isn't eaten.
+  if (!opts || opts.frontMatter !== false) {
+    const fm = md.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+    if (fm) { metaHtml = '<details class="fm"><summary>metadata</summary><pre>' + esc(fm[1]) + '</pre></details>'; md = md.slice(fm[0].length); }
+  }
 
   const safeUrl = (u) => {
     u = String(u).trim().replace(/["'<>]/g, '');
@@ -1008,6 +1042,120 @@ function renderMarkdown(raw) {
   flushImgs(); flushPara(); flushList();
   return metaHtml + html;
 }
+
+// ---------- progressive rendering for the file viewer ----------
+// A large extraction (e.g. a multi-MB single page) builds 100k+ DOM nodes; doing it
+// in one innerHTML froze the UI ~0.8s. Instead render the FIRST chunk immediately
+// (content shows at once) then append the rest across animation frames on a per-frame
+// time budget, so scroll/clicks stay responsive while the document fills in. Combined
+// with content-visibility (off-screen blocks skip layout/paint) and native
+// loading="lazy" on <img>, off-screen images aren't even built until scrolled near.
+let viewerRenderToken = 0;
+
+// Split markdown into chunks of COMPLETE top-level blocks: cut only on a blank line
+// outside a code fence, and only once a chunk reaches the target size — so tables,
+// lists, fences and paragraphs are never split mid-block.
+function splitMarkdownChunks(md, targetBytes) {
+  targetBytes = targetBytes || 100000;
+  const lines = String(md).split('\n');
+  const chunks = [];
+  let buf = [], size = 0, inFence = false, fenceTok = '';
+  for (const line of lines) {
+    buf.push(line); size += line.length + 1;
+    const f = line.match(/^\s*(```|~~~)/);
+    if (f) {
+      if (!inFence) { inFence = true; fenceTok = f[1]; }
+      else if (line.trim().startsWith(fenceTok)) { inFence = false; }
+    }
+    if (!inFence && size >= targetBytes && /^\s*$/.test(line)) { chunks.push(buf.join('\n')); buf = []; size = 0; }
+  }
+  if (buf.length) chunks.push(buf.join('\n'));
+  return chunks;
+}
+
+// Render `text` into `viewer` progressively. Returns at once; a newer call (another
+// file opened) bumps the token so the in-flight fill for the old file stops appending.
+function renderMarkdownProgressive(viewer, text) {
+  const token = ++viewerRenderToken;
+  let md = String(text || '');
+  let head = ''; // front-matter handled once here; chunks render with it disabled
+  const fm = md.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+  if (fm) { head = '<details class="fm"><summary>metadata</summary><pre>' + esc(fm[1]) + '</pre></details>'; md = md.slice(fm[0].length); }
+  const chunks = splitMarkdownChunks(md);
+  const first = chunks.length ? renderMarkdown(chunks[0], { frontMatter: false }) : '';
+  viewer.innerHTML = '<div class="md-body">' + head + first + '</div>';
+  if (chunks.length <= 1) return;
+  const body = viewer.firstChild;
+  let i = 1;
+  // setTimeout (not rAF) so the fill completes even if the tab is backgrounded
+  // (rAF pauses when hidden); the chunks land off-screen so paint-alignment is moot.
+  (function pump() {
+    if (token !== viewerRenderToken || !body.isConnected) return; // superseded / gone
+    const start = performance.now();
+    do {
+      body.insertAdjacentHTML('beforeend', renderMarkdown(chunks[i], { frontMatter: false }));
+      i++;
+    } while (i < chunks.length && performance.now() - start < 16); // time-budget per tick
+    if (i < chunks.length) setTimeout(pump, 0);
+  })();
+}
+
+// ---------- lightbox: click an image in the viewer to see it full-size ----------
+// Delegated on the viewer so it covers every image (file view + live feed), even
+// ones streamed in by the progressive renderer. A wrapping <a> is suppressed so a
+// click shows the picture instead of navigating; "open original" keeps that option.
+let lbImages = [], lbIndex = 0;
+function openLightbox(img) {
+  lbImages = Array.from($('run-viewer').querySelectorAll('.md-body img'));
+  lbIndex = lbImages.indexOf(img);
+  if (lbIndex < 0) { lbImages = [img]; lbIndex = 0; }
+  showLightbox();
+  $('lightbox').classList.remove('hidden');
+  document.addEventListener('keydown', lbKey);
+}
+function showLightbox() {
+  const img = lbImages[lbIndex];
+  if (!img) return;
+  const full = img.currentSrc || img.getAttribute('src') || '';
+  $('lb-img').src = full;
+  $('lb-img').alt = img.alt || '';
+  const many = lbImages.length > 1;
+  $('lb-cap').innerHTML =
+    (many ? '<span class="lb-count">' + (lbIndex + 1) + ' / ' + lbImages.length + '</span>' : '') +
+    (img.alt ? '<span class="lb-alt" title="' + escAttr(img.alt) + '">' + esc(img.alt) + '</span>' : '') +
+    '<a href="' + escAttr(full) + '" target="_blank" rel="noopener">open original ↗</a>';
+  $('lb-prev').classList.toggle('hidden', !many);
+  $('lb-next').classList.toggle('hidden', !many);
+}
+function lbStep(d) {
+  if (lbImages.length < 2) return;
+  lbIndex = (lbIndex + d + lbImages.length) % lbImages.length;
+  showLightbox();
+}
+function closeLightbox() {
+  $('lightbox').classList.add('hidden');
+  $('lb-img').removeAttribute('src');
+  lbImages = [];
+  document.removeEventListener('keydown', lbKey);
+}
+function lbKey(e) {
+  if (e.key === 'Escape') closeLightbox();
+  else if (e.key === 'ArrowLeft') lbStep(-1);
+  else if (e.key === 'ArrowRight') lbStep(1);
+}
+$('run-viewer').addEventListener('click', (e) => {
+  const img = e.target.closest('img');
+  if (!img) return;
+  e.preventDefault(); // don't follow a wrapping <a> — show the picture instead
+  openLightbox(img);
+});
+$('lb-close').onclick = closeLightbox;
+$('lb-prev').onclick = (e) => { e.stopPropagation(); lbStep(-1); };
+$('lb-next').onclick = (e) => { e.stopPropagation(); lbStep(1); };
+$('lightbox').addEventListener('click', (e) => {
+  // click on the dim backdrop (not the image, caption/link or controls) closes
+  if (!e.target.closest('.lb-img, .lb-cap, .lb-nav, .lb-close')) closeLightbox();
+});
 
 // ---------- view switching ----------
 function showView(name) {
@@ -1087,7 +1235,7 @@ function collectOptions() {
   // calls of any kind — embeddings included). Ollama reads the select, API the input.
   const em = (provider === 'ollama' ? $('embedModelSelect').value : $('embedModel').value).trim();
   if (em && !o.noAi) o.embedModel = em;
-  try { localStorage.setItem('sagecrawl.embedModel', em); } catch {}
+  try { localStorage.setItem('crawldna.embedModel', em); } catch {}
   // #14 — politeness, opt-in
   const dly = Number($('delay').value) || 0;
   if (dly > 0) o.delay = dly;
@@ -1134,7 +1282,7 @@ function setModelLabel(name, isCloud) {
 
 function selectModel(name, isCloud) {
   selectedModel = name;
-  try { localStorage.setItem('sagecrawl.model', name); } catch {}
+  try { localStorage.setItem('crawldna.model', name); } catch {}
   setModelLabel(name, isCloud);
   $('model-panel').querySelectorAll('.dd-item').forEach((el) => el.classList.toggle('selected', el.dataset.name === name));
   closeModelDropdown();
@@ -1175,7 +1323,7 @@ function populateModels() {
 // whose /models endpoint needs no auth (OpenRouter) AND those where it is gated.
 function onApiModelInput() {
   selectedModel = $('apiModel').value.trim();
-  try { localStorage.setItem('sagecrawl.model.openai', selectedModel); } catch {}
+  try { localStorage.setItem('crawldna.model.openai', selectedModel); } catch {}
 }
 
 function populateApiModels() {
@@ -1183,7 +1331,7 @@ function populateApiModels() {
     .map((m) => '<option value="' + escAttr(m.name) + '"></option>').join('');
   const inp = $('apiModel');
   if (!inp.value) {
-    let saved = ''; try { saved = localStorage.getItem('sagecrawl.model.openai') || ''; } catch {}
+    let saved = ''; try { saved = localStorage.getItem('crawldna.model.openai') || ''; } catch {}
     inp.value = saved || (availableModels[0] ? availableModels[0].name : '');
   }
   selectedModel = inp.value.trim();
@@ -1202,7 +1350,7 @@ function refreshPicker() {
 const EMBED_NAME_RE = /embed|bge|nomic|mxbai|arctic|e5|minilm/i;
 function populateEmbedModels() {
   let saved = '';
-  try { saved = (localStorage.getItem('sagecrawl.embedModel') || '').trim(); } catch {}
+  try { saved = (localStorage.getItem('crawldna.embedModel') || '').trim(); } catch {}
   const ranked = [...availableModels].sort(
     (a, b) => Number(EMBED_NAME_RE.test(b.name)) - Number(EMBED_NAME_RE.test(a.name)));
   const sel = $('embedModelSelect');
@@ -1219,7 +1367,7 @@ function populateEmbedModels() {
     .map((m) => '<option value="' + escAttr(m.name) + '"></option>').join('');
 }
 $('embedModelSelect').onchange = () => {
-  try { localStorage.setItem('sagecrawl.embedModel', $('embedModelSelect').value); } catch {}
+  try { localStorage.setItem('crawldna.embedModel', $('embedModelSelect').value); } catch {}
 };
 populateEmbedModels(); // before the first probe lands: "none" + the remembered model
 
@@ -1232,7 +1380,7 @@ function setApiStatus(state, html) {
 // provider's saved model, then re-probe.
 function setProvider(p) {
   provider = p === 'openai' ? 'openai' : 'ollama';
-  try { localStorage.setItem('sagecrawl.provider', provider); } catch {}
+  try { localStorage.setItem('crawldna.provider', provider); } catch {}
   $('provider-seg').querySelectorAll('.seg-btn').forEach((b) =>
     b.classList.toggle('active', b.dataset.provider === provider));
   $('ollama-block').classList.toggle('hidden', provider !== 'ollama');
@@ -1245,8 +1393,8 @@ function setProvider(p) {
   $('embedModel').classList.toggle('hidden', provider === 'ollama');
   try {
     selectedModel = provider === 'openai'
-      ? (localStorage.getItem('sagecrawl.model.openai') || $('apiModel').value.trim())
-      : (localStorage.getItem('sagecrawl.model') || selectedModel);
+      ? (localStorage.getItem('crawldna.model.openai') || $('apiModel').value.trim())
+      : (localStorage.getItem('crawldna.model') || selectedModel);
   } catch {}
   refreshModels();
 }
@@ -1273,7 +1421,7 @@ async function refreshModels() {
   if (provider === 'openai') {
     const baseUrl = $('apiBaseUrl').value.trim();
     const apiKey = $('apiKey').value.trim();
-    try { localStorage.setItem('sagecrawl.baseUrl', baseUrl); localStorage.setItem('sagecrawl.apiKey', apiKey); } catch {}
+    try { localStorage.setItem('crawldna.baseUrl', baseUrl); localStorage.setItem('crawldna.apiKey', apiKey); } catch {}
     if (!baseUrl) {
       connOk = false; availableModels = [];
       setApiStatus('checking', 'enter a base URL & key, then Fetch models');
@@ -1285,7 +1433,7 @@ async function refreshModels() {
     if (apiKey) qs.set('apiKey', apiKey);
   } else {
     const host = $('ollamaHost').value.trim() || OLLAMA_DEFAULT;
-    try { localStorage.setItem('sagecrawl.host', host); } catch {}
+    try { localStorage.setItem('crawldna.host', host); } catch {}
     setOllamaStatus('checking', 'checking Ollama…');
     qs.set('host', host);
   }
@@ -1367,7 +1515,7 @@ function applyMode(m) {
 $('mode-seg').querySelectorAll('.seg-btn').forEach((b) => (b.onclick = () => {
   if (b.disabled) return;
   applyMode(b.dataset.mode);
-  try { localStorage.setItem('sagecrawl.mode', b.dataset.mode); } catch {}
+  try { localStorage.setItem('crawldna.mode', b.dataset.mode); } catch {}
 }));
 
 // No-AI mode: dim the whole provider/model setup (it's ignored by the core when
@@ -1397,7 +1545,7 @@ function applyNoAi(on) {
 }
 $('noAi').onchange = (e) => {
   applyNoAi(e.target.checked);
-  try { localStorage.setItem('sagecrawl.noAi', e.target.checked ? '1' : ''); } catch {}
+  try { localStorage.setItem('crawldna.noAi', e.target.checked ? '1' : ''); } catch {}
 };
 
 // ---------- history (two lists: links + runs) ----------
@@ -1507,9 +1655,8 @@ async function resumeRun(runId) {
 function clearRun() {
   runScans = []; activeScanId = null; liveRunId = null;
   $('link-tabs').innerHTML = '';
-  $('run-files').innerHTML = '<span class="label">files</span><span class="muted">no files yet</span>';
-  $('rs-drawer').classList.add('hidden'); $('rsd-list').innerHTML = '';
-  $('run-doc').classList.add('hidden'); $('run-doc').innerHTML = '';
+  $('run-fdrawer').classList.add('hidden');
+  $('fd-list').innerHTML = ''; $('fd-n-crawl').textContent = ''; $('fd-n-reshape').textContent = '';
   $('run-viewer').innerHTML = '<div class="empty">Select a file to view its Markdown.</div>';
   $('run-bar-i').style.width = '0'; $('run-prog').textContent = ''; resetStats();
   $('run-ctx').innerHTML = '';
@@ -1522,7 +1669,7 @@ function renderCtx(s) {
   if (!s || !(s.url || s.task)) { el.innerHTML = ''; return; }
   const link = s.url
     ? '<span class="ctx-ico">🔗</span><a href="' + escAttr(s.url) + '" target="_blank" rel="noopener" title="' +
-      escAttr(s.url) + '">' + esc(s.url) + '</a>' : '';
+      escAttr(s.url) + '"  style="margin:0 0 4px" >' + esc(s.url) + '</a>' : '';
   const task = s.task ? '<span class="ctx-task" title="' + escAttr(s.task) + '">' + esc(s.task) + '</span>' : '';
   el.innerHTML = link + task;
 }
@@ -1535,8 +1682,9 @@ function addScan(meta) {
   s = {
     scanId: meta.scanId || '', url: meta.url || '', task: meta.task || '', title: meta.title || '',
     files: [], extractions: [], activeFile: null, startedAt: Date.now(), prog: { pct: 0, label: '' },
-    chatFiles: [],   // files produced by Reshape ({ filename, bytes, fidelity? }) — shown in the FILES bar
-    openDoc: null,   // the document the viewer shows: { name, source: 'crawl'|'reshape' }
+    chatFiles: [],       // files produced by Reshape ({ filename, bytes, fidelity? })
+    openDoc: null,       // the document the viewer shows: { name, source: 'crawl'|'reshape' }
+    fileGroup: 'crawl',  // which group the middle file browser shows: 'crawl'|'reshape'
   };
   runScans.push(s);
   renderLinkTabs();
@@ -1621,126 +1769,81 @@ function updateRunProgress(s) {
   $('st-eta').textContent = p.eta || '—';
 }
 
-// The FILES bar: crawl output (green) and reshaped files (violet), clearly apart.
-// Returns true when there is at least one document to open.
-function renderFilesBar(s) {
-  const fbar = $('run-files');
-  const chatFiles = s.chatFiles || [];
-  if (!s.files.length && !chatFiles.length) { fbar.style.display = 'none'; return false; }
-  fbar.style.display = '';
-  fbar.innerHTML = '';
-  const mkChip = (f, source) => {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'chip' + (source === 'reshape' ? ' rs' : '');
-    chip.dataset.name = f.filename;
-    chip.dataset.source = source;
-    const nWarn = (f.fidelity && f.fidelity.unverified && f.fidelity.unverified.length) || 0;
-    chip.innerHTML = esc(f.filename) + (f.bytes != null ? ' <span style="opacity:.6">· ' + esc(fmtBytes(f.bytes)) + '</span>' : '') +
-      (nWarn ? '<span class="chip-warn">⚠</span>' : '');
-    chip.title = f.filename +
-      (source === 'reshape' ? ' — produced by Reshape (AI-reworked)' : ' — verbatim crawl output') +
-      (nWarn ? ` · ⚠ ${nWarn} value(s) not found in the crawled sources` : '');
-    chip.onclick = () => (source === 'reshape' ? loadChatFile(s, f.filename) : loadFile(s, f.filename));
-    fbar.appendChild(chip);
-  };
-  if (s.files.length) {
-    fbar.insertAdjacentHTML('beforeend', '<span class="label">crawl</span>');
-    s.files.forEach((f) => mkChip(f, 'crawl'));
+// ---- middle column: the OUTPUT file browser ----
+// ONE place to pick a document: the verbatim CRAWL output or the REShaped files,
+// chosen with a tab. The left column shows whatever is picked; the right column is
+// the tools (incl. the Reshape chat that PRODUCES the reshaped files).
+function renderFileDrawer(s) {
+  const dr = $('run-fdrawer');
+  if (!s) {
+    dr.classList.add('hidden');
+    $('fd-list').innerHTML = ''; $('fd-n-crawl').textContent = ''; $('fd-n-reshape').textContent = '';
+    return;
   }
-  // Reshaped documents do NOT crowd the bar: one violet toggle opens their drawer
-  // (they can grow with every chat turn; the bar stays a single scrollable line).
-  if (chatFiles.length) {
-    if (s.files.length) fbar.insertAdjacentHTML('beforeend', '<span class="divider"></span>');
-    const tog = document.createElement('button');
-    tog.type = 'button';
-    tog.className = 'chip rs-toggle' + (s.rsDrawerOpen ? ' open' : '');
-    tog.innerHTML = '▤ reshaped · ' + chatFiles.length + ' <span style="opacity:.7">' + (s.rsDrawerOpen ? '▴' : '▾') + '</span>';
-    tog.title = 'Documents produced by the Reshape chat — click to ' + (s.rsDrawerOpen ? 'close' : 'open') + ' the drawer';
-    tog.onclick = () => { s.rsDrawerOpen = !s.rsDrawerOpen; renderFilesBar(s); };
-    fbar.appendChild(tog);
-  }
-  renderRsDrawer(s);
-  return true;
-}
-
-// The drawer itself: one row per reshaped document (violet = AI-reworked; the ⚠
-// count is the fidelity check's unverified values), viewer-linked like any chip.
-function renderRsDrawer(s) {
-  const box = $('rs-drawer');
-  const chatFiles = (s && s.chatFiles) || [];
-  const open = !!(s && s.rsDrawerOpen && chatFiles.length);
-  box.classList.toggle('hidden', !open);
-  if (!open) return;
-  $('rsd-count').textContent = chatFiles.length + ' file(s)';
-  const list = $('rsd-list');
+  dr.classList.remove('hidden');
+  const crawl = s.files || [];
+  const chat = s.chatFiles || [];
+  $('fd-n-crawl').textContent = crawl.length || '';
+  $('fd-n-reshape').textContent = chat.length || '';
+  // active group: the remembered pick, nudged to whichever group actually has files
+  let g = s.fileGroup === 'reshape' ? 'reshape' : 'crawl';
+  if (g === 'crawl' && !crawl.length && chat.length) g = 'reshape';
+  if (g === 'reshape' && !chat.length && crawl.length) g = 'crawl';
+  s.fileGroup = g;
+  dr.dataset.group = g;
+  $('fd-crawl').classList.toggle('on', g === 'crawl');
+  $('fd-reshape').classList.toggle('on', g === 'reshape');
+  const files = g === 'crawl' ? crawl : chat;
+  const list = $('fd-list');
   list.innerHTML = '';
-  for (const f of chatFiles) {
+  if (!files.length) {
+    list.innerHTML = '<div class="fd-empty">' +
+      (g === 'crawl' ? 'No crawl files yet.' : 'No reshaped files yet.<br>Ask in the Reshape chat →') + '</div>';
+    return;
+  }
+  for (const f of files) {
     const it = document.createElement('button');
     it.type = 'button';
-    it.className = 'rsd-item';
+    it.className = 'fd-item';
     it.dataset.name = f.filename;
+    it.dataset.source = g;
+    it.title = f.filename; // full name on hover, even when the row is faded/truncated
     const nWarn = (f.fidelity && f.fidelity.unverified && f.fidelity.unverified.length) || 0;
-    it.innerHTML = '<span class="rsd-name">' + esc(f.filename) + '</span>' +
-      (nWarn ? '<span class="rsd-warn" title="values not found in the crawled sources — details inside the file">⚠ ' + nWarn + '</span>' : '') +
-      (f.bytes != null ? '<span class="rsd-meta">' + esc(fmtBytes(f.bytes)) + '</span>' : '');
-    it.onclick = () => loadChatFile(s, f.filename);
+    it.innerHTML = '<span class="fd-name">' + esc(f.filename) + '</span>' +
+      (nWarn ? '<span class="fd-warn" title="values not found in the crawled sources — details inside the file">⚠ ' + nWarn + '</span>' : '') +
+      (f.bytes != null ? '<span class="fd-meta">' + esc(fmtBytes(f.bytes)) + '</span>' : '');
+    it.onclick = () => (g === 'reshape' ? loadChatFile(s, f.filename) : loadFile(s, f.filename));
     list.appendChild(it);
   }
   syncDocChips(s);
 }
-$('rsd-close').onclick = () => {
-  const s = getScan(activeScanId);
-  if (s) { s.rsDrawerOpen = false; renderFilesBar(s); }
-};
+// point the browser at a group; re-render only when it actually changes
+function showFileGroup(s, g) {
+  if (!s) return false;
+  if (s.fileGroup !== g) { s.fileGroup = g; renderFileDrawer(s); return true; }
+  return false;
+}
+$('fd-crawl').onclick = () => { const s = getScan(activeScanId); if (s) { s.fileGroup = 'crawl'; renderFileDrawer(s); } };
+$('fd-reshape').onclick = () => { const s = getScan(activeScanId); if (s) { s.fileGroup = 'reshape'; renderFileDrawer(s); } };
 
-// Reflect the OPEN document everywhere at once: files-bar chips, the chat's file
-// chips, and the identity bar above the viewer. One source of truth (s.openDoc).
+// Reflect the OPEN document (s.openDoc) in the file-browser list + the chat's file
+// chips. One source of truth; the active item shows only when its group is on view.
 function syncDocChips(s) {
   const d = (s && s.openDoc) || {};
-  $('run-files').querySelectorAll('.chip').forEach((c) =>
+  $('fd-list').querySelectorAll('.fd-item').forEach((c) =>
     c.classList.toggle('active', c.dataset.name === d.name && c.dataset.source === d.source));
-  $('rsd-list').querySelectorAll('.rsd-item').forEach((c) =>
-    c.classList.toggle('active', d.source === 'reshape' && c.dataset.name === d.name));
   $('rs-log').querySelectorAll('.rs-file').forEach((c) =>
     c.classList.toggle('active', d.source === 'reshape' && c.dataset.name === d.name));
 }
 
-function setDocHead(s, doc) {
-  const el = $('run-doc');
-  if (!s || !doc) { el.classList.add('hidden'); el.innerHTML = ''; return; }
-  const isRs = doc.source === 'reshape';
-  const rec = isRs
-    ? (s.chatFiles || []).find((f) => f.filename === doc.name)
-    : s.files.find((f) => f.filename === doc.name);
-  const bytes = rec && rec.bytes != null ? fmtBytes(rec.bytes) : '';
-  const nWarn = (isRs && rec && rec.fidelity && rec.fidelity.unverified && rec.fidelity.unverified.length) || 0;
-  el.innerHTML =
-    '<span class="dh-badge ' + (isRs ? 'reshape' : 'crawl') + '" title="' +
-      (isRs ? 'Produced by the Reshape chat — AI-reworked from the crawl output'
-            : 'Verbatim extraction — exactly what the crawler captured') + '">' +
-      (isRs ? '▤ reshaped' : '✓ crawl output') + '</span>' +
-    '<span class="dh-name" title="' + escAttr(doc.name) + '">' + esc(doc.name) + '</span>' +
-    (bytes ? '<span class="dh-meta">' + esc(bytes) + '</span>' : '') +
-    (nWarn ? '<span class="dh-warn" title="These values were not found in the crawled sources and may be invented — details inside the file">⚠ ' +
-      nWarn + ' unverified</span>' : '') +
-    (isRs && s.files.length
-      ? '<button type="button" class="ghost dh-back" data-act="back">← crawl output</button>' : '');
-  el.classList.remove('hidden');
-  const back = el.querySelector('[data-act="back"]');
-  if (back) back.onclick = () => {
-    const name = (s.activeFile && s.files.some((f) => f.filename === s.activeFile)) ? s.activeFile : s.files[0].filename;
-    loadFile(s, name);
-  };
-}
-
 function renderMain(s) {
   const viewer = $('run-viewer');
-  if (!s) { $('run-files').innerHTML = ''; setDocHead(null, null); viewer.innerHTML = '<div class="empty">No link selected.</div>'; return; }
-  if (renderFilesBar(s)) {
+  if (!s) { renderFileDrawer(null); viewer.innerHTML = '<div class="empty">No link selected.</div>'; return; }
+  renderFileDrawer(s);
+  const chatFiles = s.chatFiles || [];
+  if (s.files.length || chatFiles.length) {
     // open the remembered document if it still exists, else the first crawl file
     // (or the first reshaped one when the crawl produced none)
-    const chatFiles = s.chatFiles || [];
     const inCrawl = (n) => s.files.some((f) => f.filename === n);
     const inChat = (n) => chatFiles.some((f) => f.filename === n);
     let want = s.openDoc;
@@ -1753,7 +1856,6 @@ function renderMain(s) {
     else loadFile(s, want.name);
   } else {
     // no files yet — show this link's live extraction feed (or a placeholder)
-    setDocHead(null, null);
     if (s.extractions.length) {
       viewer.innerHTML = '<div class="scan-extractions">' + s.extractions.join('') + '</div>';
     } else {
@@ -1779,14 +1881,13 @@ function appendExtraction(s, html) {
 async function loadFile(s, name) {
   s.activeFile = name;
   s.openDoc = { name, source: 'crawl' };
-  syncDocChips(s);
-  setDocHead(s, s.openDoc);
+  if (!showFileGroup(s, 'crawl')) syncDocChips(s); // browser follows the open document
   const viewer = $('run-viewer');
   viewer.innerHTML = '<div class="empty">loading…</div>';
   try {
     const r = await fetch('/runs/' + encodeURIComponent(liveRunId) +
       '/file?scan=' + encodeURIComponent(s.scanId) + '&name=' + encodeURIComponent(name));
-    viewer.innerHTML = '<div class="md-body">' + renderMarkdown(await r.text()) + '</div>';
+    renderMarkdownProgressive(viewer, await r.text()); // chunked → no UI freeze on big files
   } catch {
     viewer.innerHTML = '<div class="empty">could not load file</div>';
   }
@@ -1872,14 +1973,13 @@ function chatBubble(s, m) {
 
 async function loadChatFile(s, name) {
   s.openDoc = { name, source: 'reshape' };
-  syncDocChips(s);
-  setDocHead(s, s.openDoc);
+  if (!showFileGroup(s, 'reshape')) syncDocChips(s); // browser switches to the Reshape group
   const viewer = $('run-viewer');
   viewer.innerHTML = '<div class="empty">loading…</div>';
   try {
     const r = await fetch('/runs/' + encodeURIComponent(liveRunId) +
       '/chatfile?scan=' + encodeURIComponent(s.scanId) + '&name=' + encodeURIComponent(name));
-    viewer.innerHTML = '<div class="md-body">' + renderMarkdown(await r.text()) + '</div>';
+    renderMarkdownProgressive(viewer, await r.text()); // chunked → no UI freeze on big files
   } catch {
     viewer.innerHTML = '<div class="empty">could not load file</div>';
   }
@@ -1922,12 +2022,12 @@ async function sendReshape() {
     }
     const idx = s.chatMessages.indexOf(pending);
     s.chatMessages[idx] = { role: 'assistant', content: reply, files: (data.files || []).map((f) => f.filename) };
-    // register the new files (bytes + fidelity ride along) → the drawer shows them
+    // register the new files (bytes + fidelity ride along) → the browser shows them
     s.chatFiles = [...(s.chatFiles || []), ...(data.files || [])];
-    if ((data.files || []).length) s.rsDrawerOpen = true; // fresh documents present themselves
+    if ((data.files || []).length) s.fileGroup = 'reshape'; // fresh documents present themselves
     if (activeScanId === s.scanId) {
       renderChatLog(s);
-      renderFilesBar(s);
+      renderFileDrawer(s); // new documents bump the Reshape tab count + list
       const files = s.chatMessages[idx].files;
       if (files && files.length) loadChatFile(s, files[0]); // auto-open the first new file
       else syncDocChips(s);
@@ -1954,6 +2054,7 @@ function enterRunView({ live }) {
   showView('run');
   runMode = live ? 'live' : 'view';
   crawlFinished = false;
+  $('view-run').classList.toggle('live', !!live); // gates the progress-bar shine animation
   $('stop').classList.toggle('hidden', !live);
   $('status').textContent = live ? 'running' : 'viewing';
   clearRun();
@@ -2290,6 +2391,7 @@ function handle(ev) {
     case 'done':
       $('status').textContent = 'done';
       $('stop').classList.add('hidden');
+      $('view-run').classList.remove('live'); // crawl over → stop the progress shine
       crawlFinished = true;
       if (ev.stats && ev.stats.tokens) { runTokens = ev.stats.tokens; showTokens(); }
       syncSide(getScan(activeScanId)); // crawl over → Reshape becomes available, Activity/Tree stay
@@ -2337,28 +2439,28 @@ $('stop').onclick = async () => {
 
 // boot
 try {
-  const savedHost = localStorage.getItem('sagecrawl.host');
+  const savedHost = localStorage.getItem('crawldna.host');
   if (savedHost) $('ollamaHost').value = savedHost;
-  const savedBase = localStorage.getItem('sagecrawl.baseUrl');
+  const savedBase = localStorage.getItem('crawldna.baseUrl');
   if (savedBase) $('apiBaseUrl').value = savedBase;
-  const savedKey = localStorage.getItem('sagecrawl.apiKey');
+  const savedKey = localStorage.getItem('crawldna.apiKey');
   if (savedKey) $('apiKey').value = savedKey;
-  const savedApiModel = localStorage.getItem('sagecrawl.model.openai');
+  const savedApiModel = localStorage.getItem('crawldna.model.openai');
   if (savedApiModel) $('apiModel').value = savedApiModel;
-  selectedModel = localStorage.getItem('sagecrawl.model') || '';
-  const savedEmbed = localStorage.getItem('sagecrawl.embedModel');
+  selectedModel = localStorage.getItem('crawldna.model') || '';
+  const savedEmbed = localStorage.getItem('crawldna.embedModel');
   if (savedEmbed) $('embedModel').value = savedEmbed;
   // Mode first, then no-AI: applyNoAi forces 'complete' if a saved 'targeted'
   // clashes with a saved no-AI (targeted needs AI).
-  const savedMode = localStorage.getItem('sagecrawl.mode');
+  const savedMode = localStorage.getItem('crawldna.mode');
   applyMode(savedMode === 'targeted' ? 'targeted' : 'complete');
-  if (localStorage.getItem('sagecrawl.noAi') === '1') { $('noAi').checked = true; applyNoAi(true); }
+  if (localStorage.getItem('crawldna.noAi') === '1') { $('noAi').checked = true; applyNoAi(true); }
 } catch {
   applyMode('complete');
 }
 renderHistory();
 let savedProvider = 'ollama';
-try { savedProvider = localStorage.getItem('sagecrawl.provider') || 'ollama'; } catch {}
+try { savedProvider = localStorage.getItem('crawldna.provider') || 'ollama'; } catch {}
 setProvider(savedProvider); // sets up the active provider's blocks + probes models
 </script>
 </body>

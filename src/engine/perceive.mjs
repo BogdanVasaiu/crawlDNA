@@ -15,10 +15,10 @@ export async function perceive(page, { maxText = 2500, maxRevealers = 150, maxLi
       // Clear the markers left by PREVIOUS perceive passes first. Ids restart from 0
       // on every pass; without this, an element stamped in an earlier pass keeps its
       // stale id while a different element gets the same number this pass — and the
-      // actuator's [data-sagecrawl-id="N"] locator (.first()) can then click the
+      // actuator's [data-crawldna-id="N"] locator (.first()) can then click the
       // WRONG element. One wrong click corrupts the whole reveal walk.
-      for (const el of document.querySelectorAll('[data-sagecrawl-id]')) {
-        el.removeAttribute('data-sagecrawl-id');
+      for (const el of document.querySelectorAll('[data-crawldna-id]')) {
+        el.removeAttribute('data-crawldna-id');
       }
       const isVisible = (el) => {
         const r = el.getBoundingClientRect();
@@ -115,7 +115,7 @@ export async function perceive(page, { maxText = 2500, maxRevealers = 150, maxLi
         '[role=button]', '[role=tab]', '[role=menuitemradio]', '[role=switch]',
         '[role=option]', '[role=checkbox]', '[role=combobox]',
         '[aria-expanded]', '[aria-controls]', '[aria-selected]', '[aria-pressed]',
-        '[onclick]', '[data-sagecrawl-listener]',
+        '[onclick]', '[data-crawldna-listener]',
         'a[href^="#"]', 'a:not([href])',
         '[class*=tab]', '[class*=accordion]', '[class*=toggle]', '[class*=expand]',
         '[class*=collaps]', '[class*=disclosure]', '[class*=segment]',
@@ -162,7 +162,7 @@ export async function perceive(page, { maxText = 2500, maxRevealers = 150, maxLi
           overlayTexts.set(overlay, overlayText);
         }
         const r = el.getBoundingClientRect();
-        el.setAttribute('data-sagecrawl-id', String(rid));
+        el.setAttribute('data-crawldna-id', String(rid));
         consentCandidates.push({
           id: rid,
           label,
@@ -198,7 +198,7 @@ export async function perceive(page, { maxText = 2500, maxRevealers = 150, maxLi
         const cls = el.getAttribute('class') || '';
         const style = getComputedStyle(el);
         const href = el.getAttribute('href') || '';
-        const hasListener = el.hasAttribute('data-sagecrawl-listener') || el.hasAttribute('onclick');
+        const hasListener = el.hasAttribute('data-crawldna-listener') || el.hasAttribute('onclick');
         const ariaExpanded = el.getAttribute('aria-expanded');
         const ariaControls = el.getAttribute('aria-controls') || '';
         const ariaSelected = el.getAttribute('aria-selected');
@@ -311,9 +311,9 @@ export async function perceive(page, { maxText = 2500, maxRevealers = 150, maxLi
         // would strand the consentCandidate reference and break dismissal. Consent
         // ids [0,k) and revealer ids [k,…) share one counter and never collide, so
         // a reused id stays unique. Unmarked → take (and stamp) the next fresh id.
-        const marked = el.getAttribute('data-sagecrawl-id');
+        const marked = el.getAttribute('data-crawldna-id');
         const cid = marked != null ? Number(marked) : rid++;
-        if (marked == null) el.setAttribute('data-sagecrawl-id', String(cid));
+        if (marked == null) el.setAttribute('data-crawldna-id', String(cid));
         // #27 — the control's ABSOLUTE vertical position in the page. It orders the
         // reveal states in the output by REPRESENTATION (proximity to the base): an
         // app's nav rail runs Dashboard→Analytics→Chat→Settings top-to-bottom, so
@@ -432,7 +432,7 @@ export async function perceive(page, { maxText = 2500, maxRevealers = 150, maxLi
 // so every card/section title painted with a bigger font flattens to anonymous
 // text and the page loses its skeleton. Runs IN THE BROWSER (getComputedStyle):
 // self-contained ON PURPOSE — reveal's captureHtml inlines it via .toString()
-// into its evaluate, atomically with the data-sagecrawl-hidden pass (mark →
+// into its evaluate, atomically with the data-crawldna-hidden pass (mark →
 // serialize → unmark), so no marker ever leaks into the live DOM of the next
 // state. The signal is a RATIO, never a class name (rule #2): fontSize ≥ 1.15×
 // the LOCAL body font, or bold (≥600) at ≥ body size. The level maps from the
@@ -444,9 +444,9 @@ export async function perceive(page, { maxText = 2500, maxRevealers = 150, maxLi
 export function markVisualHeadings() {
   const marked = [];
   if (!document.body) return marked;
-  // Clear stale markers first (same defensive pattern as data-sagecrawl-id).
-  for (const el of document.querySelectorAll('[data-sagecrawl-heading]')) {
-    el.removeAttribute('data-sagecrawl-heading');
+  // Clear stale markers first (same defensive pattern as data-crawldna-id).
+  for (const el of document.querySelectorAll('[data-crawldna-heading]')) {
+    el.removeAttribute('data-crawldna-heading');
   }
   const norm = (t) => (t || '').replace(/\s+/g, ' ').trim();
   const styleCache = new Map();
@@ -534,12 +534,12 @@ export function markVisualHeadings() {
   // Never a heading: interactive/label surfaces, cells, list items (#25), code,
   // real headings — and anything under an already-marked title (no nesting).
   const BANNED =
-    'a,button,h1,h2,h3,h4,h5,h6,table,th,td,li,ul,ol,dl,pre,code,kbd,samp,label,select,option,textarea,input,summary,figcaption,blockquote,nav,aside,footer,[role=heading],[role=button],[role=tab],[role=list],[role=listitem],[data-sagecrawl-heading]';
-  // [data-sagecrawl-heading]: an element already CONTAINING a marked title is not
+    'a,button,h1,h2,h3,h4,h5,h6,table,th,td,li,ul,ol,dl,pre,code,kbd,samp,label,select,option,textarea,input,summary,figcaption,blockquote,nav,aside,footer,[role=heading],[role=button],[role=tab],[role=list],[role=listitem],[data-crawldna-heading]';
+  // [data-crawldna-heading]: an element already CONTAINING a marked title is not
   // itself marked — blocks marked pairs nesting into `#### #### …`. Marking here is
   // inner-first (document order of the first text node), so the outer, evaluated
   // later, sees the inner marker and skips.
-  const STRUCTURAL = 'h1,h2,h3,h4,h5,h6,table,ul,ol,pre,blockquote,button,a,input,select,textarea,[data-sagecrawl-heading]';
+  const STRUCTURAL = 'h1,h2,h3,h4,h5,h6,table,ul,ol,pre,blockquote,button,a,input,select,textarea,[data-crawldna-heading]';
   for (const el of blocks) {
     const text = norm(el.textContent);
     if (text.length < 2 || text.length > 60) continue; // a title is one short line
@@ -597,7 +597,7 @@ export function markVisualHeadings() {
     if (!jump) continue;
     const ratio = st.maxSize / body;
     const level = ratio >= 1.8 ? 2 : ratio >= 1.35 ? 3 : 4;
-    el.setAttribute('data-sagecrawl-heading', String(level));
+    el.setAttribute('data-crawldna-heading', String(level));
     marked.push(el);
   }
   return marked;

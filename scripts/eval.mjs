@@ -42,7 +42,7 @@ const OPTIONS = {
   help: { type: 'boolean', short: 'h' },
 };
 
-const HELP = `sagecrawl eval — measure a crawl against a golden spec (TODO.md #12)
+const HELP = `crawldna eval — measure a crawl against a golden spec (TODO.md #12)
 
   node scripts/eval.mjs [spec.json …] --model <id> [options]
   npm run eval -- --model qwen3-coder:30b

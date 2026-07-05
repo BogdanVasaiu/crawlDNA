@@ -1,4 +1,4 @@
-// sagecrawl — public API + core orchestration.
+// crawldna — public API + core orchestration.
 //
 // crawlDocs(targets, options) returns a `run` that is:
 //   - async-iterable (yields events, §6)
@@ -60,7 +60,7 @@ export const DEFAULT_OPTIONS = {
   //     and callers that ask for it by name; the CLI and UI never send it.
   ollamaHost: undefined, // override the Ollama server URL (default: http://127.0.0.1:11434)
   baseUrl: undefined, // OpenAI-compatible API base URL (provider 'openai')
-  apiKey: undefined, // API key (provider 'openai'); falls back to SAGECRAWL_API_KEY / OPENAI_API_KEY
+  apiKey: undefined, // API key (provider 'openai'); falls back to CRAWLDNA_API_KEY / OPENAI_API_KEY
   browser: 'auto', // 'never' | 'auto' | 'always'
   concurrency: 4,
   maxPages: 0, // 0 = unlimited
@@ -86,13 +86,13 @@ export const DEFAULT_OPTIONS = {
   // universal, task-driven way to keep the crawl on-topic without per-site rules. Only
   // applies when the task discriminates among a page's links, so a generic task is never
   // over-pruned. Trades some recall for speed/scope, so it stays opt-in. See lib/relevance.mjs.
-  // Persistence is OPT-IN. As a library, sagecrawl writes NOTHING by default: the full
+  // Persistence is OPT-IN. As a library, crawldna writes NOTHING by default: the full
   // result (scans[].files[].markdown) is returned in memory for the caller to save
   // wherever they like. A run is written to the cache ONLY when the caller opts in —
-  // by setting `save: true`, or by giving an explicit `cacheDir` (or SAGECRAWL_CACHE_DIR).
+  // by setting `save: true`, or by giving an explicit `cacheDir` (or CRAWLDNA_CACHE_DIR).
   // The CLI and Web UI are apps, so they pass `save: true` (cache rooted at cwd).
   save: false,
-  cacheDir: undefined, // where to save when saving is on (default: <cwd>/.sagecrawl/runs)
+  cacheDir: undefined, // where to save when saving is on (default: <cwd>/.crawldna/runs)
   perDocument: false, // ALSO package one identifiable .md per page (+ index.md + JSONL)
   // for programmatic consumers, alongside the consolidated .md. Off by default (the
   // consolidated file is friendlier for a human). Pure repackaging — content stays
@@ -257,8 +257,8 @@ export function crawlDocs(targets, options = {}) {
 
   // Persistence is opt-in (see DEFAULT_OPTIONS.save): write a run to the cache only
   // when the caller asked — explicitly via `save`, or implicitly by naming a place
-  // to put it (`cacheDir` / SAGECRAWL_CACHE_DIR). Otherwise the crawl stays in memory.
-  const willSave = opts.save === true || !!opts.cacheDir || !!process.env.SAGECRAWL_CACHE_DIR || !!resume;
+  // to put it (`cacheDir` / CRAWLDNA_CACHE_DIR). Otherwise the crawl stays in memory.
+  const willSave = opts.save === true || !!opts.cacheDir || !!process.env.CRAWLDNA_CACHE_DIR || !!resume;
 
   // Incremental journal (#13): when saving is on, every kept page is appended to
   // <run>/<scanId>/pages.jsonl AS IT IS CAPTURED, so a crash (or Stop) at hour 4 of
@@ -946,7 +946,7 @@ async function runGeneralCrawl(target, ctx, opts = {}) {
  *
  * `overrides` are merged over the run's saved options (model, provider,
  * concurrency, …). An `apiKey` is never persisted, so for `provider: 'openai'`
- * pass it again here or via SAGECRAWL_API_KEY / OPENAI_API_KEY.
+ * pass it again here or via CRAWLDNA_API_KEY / OPENAI_API_KEY.
  *
  * @param {string} runId
  * @param {Partial<typeof DEFAULT_OPTIONS>} [overrides]

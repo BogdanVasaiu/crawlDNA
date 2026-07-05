@@ -341,7 +341,7 @@ async function handleModels(res, params) {
 async function handleIndex(res) {
   try {
     const html = await readFile(path.join(__dirname, 'index.html'));
-    // The UI is a single local file that changes whenever sagecrawl is updated;
+    // The UI is a single local file that changes whenever crawldna is updated;
     // never let the browser serve a cached (stale) copy, or UI fixes silently
     // won't appear until a hard refresh.
     res.writeHead(200, {
@@ -419,8 +419,8 @@ export async function startServer({ port = 4000, host = '127.0.0.1' } = {}) {
   server.on('error', (err) => {
     if (err && err.code === 'EADDRINUSE') {
       process.stderr.write(
-        `\n✗ Port ${port} is already in use — an old sagecrawl server is still running.\n` +
-          `  Close that terminal/process, or start with a different port: sagecrawl serve --port ${port + 1}\n`,
+        `\n✗ Port ${port} is already in use — an old crawldna server is still running.\n` +
+          `  Close that terminal/process, or start with a different port: crawldna serve --port ${port + 1}\n`,
       );
     } else {
       process.stderr.write('✗ Server error: ' + (err && err.message) + '\n');
@@ -429,7 +429,7 @@ export async function startServer({ port = 4000, host = '127.0.0.1' } = {}) {
   });
 
   await new Promise((resolve) => server.listen(port, host, resolve));
-  process.stdout.write(`sagecrawl UI on http://localhost:${port}\n`);
+  process.stdout.write(`crawldna UI on http://localhost:${port}\n`);
 
   // Make the browser ready up front so the user never hits a mid-crawl error.
   const ready = await ensureBrowser({ log: (m) => process.stdout.write(m + '\n') });

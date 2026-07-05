@@ -1,4 +1,4 @@
-# sagecrawl — How It Works
+# crawldna — How It Works
 
 > A task-driven web crawler that turns any website into clean Markdown, using a
 > real browser + a local LLM. This document explains how the system works
@@ -10,7 +10,7 @@
 
 ## 1. What it does
 
-You give sagecrawl **one or more URLs** plus a **plain-English task** (e.g. "Extract
+You give crawldna **one or more URLs** plus a **plain-English task** (e.g. "Extract
 all the documentation", "Get the pizza menu", "Put the images in image.md and the
 rest in extract.md"). For each site it:
 
@@ -92,13 +92,13 @@ is just a **consumer** of `crawlDocs`. No crawling logic lives outside the core.
 
 All three faces call the same core, [`crawlDocs`](src/index.mjs):
 
-- **CLI** — [`bin/cli.mjs`](bin/cli.mjs). `sagecrawl <url> --task "..."`, plus
+- **CLI** — [`bin/cli.mjs`](bin/cli.mjs). `crawldna <url> --task "..."`, plus
   `resume` (complete an interrupted run), `serve` (Web UI) and `runs` (cache
   management). Renders the event stream to the terminal.
 - **Web UI** — [`ui/server.mjs`](ui/server.mjs) + [`ui/index.html`](ui/index.html).
   A `node:http` server with Server-Sent Events for live progress and a small REST
   surface over the runs cache.
-- **Library** — `import { crawlDocs } from 'sagecrawl'`. Returns a `run` object that
+- **Library** — `import { crawlDocs } from 'crawldna'`. Returns a `run` object that
   is async-iterable (events), exposes `run.result` (a Promise), and `run.stop()`.
 
 ```js
@@ -318,12 +318,12 @@ Each output file is `{ filename, title, markdown, bytes, pages: string[] }`.
 ## 9. Persistence ([`src/lib/runs.mjs`](src/lib/runs.mjs), [`output.mjs`](src/lib/output.mjs))
 
 A run is written to the cache **only when the caller opts in.** The **CLI and Web
-UI always do** (they are apps, so `sagecrawl runs` / Reshape can find the run later); a
+UI always do** (they are apps, so `crawldna runs` / Reshape can find the run later); a
 **library** call to `crawlDocs` writes **nothing** unless you pass `save: true` or a
 `cacheDir` — its full result is returned in memory instead (`scans[].files[].markdown`),
 to save wherever you like. The cache root defaults to the **current working
-directory** (`<cwd>/.sagecrawl/runs/`), overridable with `cacheDir` / `--cache-dir` /
-`SAGECRAWL_CACHE_DIR`. A saved run folder contains:
+directory** (`<cwd>/.crawldna/runs/`), overridable with `cacheDir` / `--cache-dir` /
+`CRAWLDNA_CACHE_DIR`. A saved run folder contains:
 
 ```
 20260621-160156-aa9498/         # run id: <timestamp>-<rand>
@@ -348,7 +348,7 @@ the links it discovered. A crash (or Ctrl-C) therefore never loses extracted
 content: the run stays listed with its journal intact (`status` stays `running`
 after a kill, becomes `stopped` after a graceful stop).
 
-`resumeCrawl(runId)` (CLI: `sagecrawl resume <runId>`, UI: `POST /resume`)
+`resumeCrawl(runId)` (CLI: `crawldna resume <runId>`, UI: `POST /resume`)
 replays the journal: restored pages go straight into the result (never
 re-rendered), their content hashes rebuild the dedup state, their URLs become
 pre-visited, and their recorded links re-seed the frontier — so the crawl
@@ -389,7 +389,7 @@ special-casing — the engine is universal.
 | `model` | — (**required**) | Model id — Ollama (e.g. `qwen3-coder:30b`) or an OpenAI-compatible model (e.g. `gpt-4o-mini`). No default; you must choose one |
 | `provider` | `ollama` | `ollama` (local) \| `openai` (any OpenAI-compatible API) |
 | `baseUrl` | — | API base URL for `provider: openai` |
-| `apiKey` | — | API key for `provider: openai` (falls back to `SAGECRAWL_API_KEY` / `OPENAI_API_KEY`) |
+| `apiKey` | — | API key for `provider: openai` (falls back to `CRAWLDNA_API_KEY` / `OPENAI_API_KEY`) |
 | `ollamaHost` | `127.0.0.1:11434` | Override the Ollama server |
 | `browser` | `auto` | `never` \| `auto` \| `always` |
 | `concurrency` | `4` | Parallel page renders |
@@ -398,7 +398,7 @@ special-casing — the engine is universal.
 | `maxRoutes` | `200` | Cap on JS-mined route candidates sent to the AI link gate, top-ranked by task relevance (0 = unlimited; only cuts when scores discriminate; DOM links never capped) |
 | `include` / `exclude` | — | Regex URL scope filters |
 | `save` | `false` | Persist the run to the cache. CLI/UI set this; a library call stays in memory unless set (or a `cacheDir` is given) |
-| `cacheDir` | `<cwd>/.sagecrawl/runs` | Where to save when saving is on |
+| `cacheDir` | `<cwd>/.crawldna/runs` | Where to save when saving is on |
 
 **Models:** the engine relies on the model for tool-quality JSON. `qwen3-coder:30b`
 is reliable for the reveal/link/layout JSON; very small models are not.

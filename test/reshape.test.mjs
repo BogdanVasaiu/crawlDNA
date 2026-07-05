@@ -47,7 +47,7 @@ before(async () => {
     baseUrl: `http://127.0.0.1:${server.address().port}/v1`,
     apiKey: 'k',
   };
-  tmp = await mkdtemp(path.join(os.tmpdir(), 'sagecrawl-reshape-test-'));
+  tmp = await mkdtemp(path.join(os.tmpdir(), 'crawldna-reshape-test-'));
   const scanDir = path.join(tmp, runId, sid);
   await mkdir(scanDir, { recursive: true });
   await writeFile(path.join(scanDir, 'docs.md'), SOURCE, 'utf8');
@@ -100,7 +100,7 @@ test('deep request: retrieval feeds the right section; the invented value is fla
 
   // the warning lives INSIDE the saved file, before the content
   const onDisk = await readFile(path.join(tmp, runId, sid, 'chat', out.files[0].filename), 'utf8');
-  assert.ok(onDisk.startsWith('> ⚠️ **Fidelity check (sagecrawl):**'));
+  assert.ok(onDisk.startsWith('> ⚠️ **Fidelity check (crawldna):**'));
   assert.ok(onDisk.includes("`'elevated'`"));
   assert.ok(onDisk.includes("| `close-label` | `'$vuetify.close'` |"), 'content itself is untouched');
 });

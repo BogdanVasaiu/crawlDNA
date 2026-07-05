@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// sagecrawl CLI — a thin face over the core (§7). All logic lives in src/index.mjs.
+// crawldna CLI — a thin face over the core (§7). All logic lives in src/index.mjs.
 
 import { parseArgs } from 'node:util';
 import { readFile, stat } from 'node:fs/promises';
@@ -20,29 +20,29 @@ const C = {
 const useColor = process.stdout.isTTY;
 const c = (color, s) => (useColor ? color + s + C.reset : s);
 
-const HELP = `${C.bold}sagecrawl${C.reset} — general, task-driven web crawler → clean Markdown
+const HELP = `${C.bold}crawldna${C.reset} — general, task-driven web crawler → clean Markdown
 
 Usage:
-  sagecrawl <url> [--task "..."]                       crawl one site
-  sagecrawl crawl <url> [options]                      crawl one or more sites
-  sagecrawl resume <runId> [options]                   complete an interrupted run (crash/stop)
-  sagecrawl reshape <runId> --ask "..."                reshape a saved extraction (Phase 2)
-  sagecrawl serve [--port 4000]                        start the optional Web UI (source repo only)
-  sagecrawl runs [list|rm <id…>|clear|path]            manage cached runs
-  sagecrawl --help · --version
+  crawldna <url> [--task "..."]                       crawl one site
+  crawldna crawl <url> [options]                      crawl one or more sites
+  crawldna resume <runId> [options]                   complete an interrupted run (crash/stop)
+  crawldna reshape <runId> --ask "..."                reshape a saved extraction (Phase 2)
+  crawldna serve [--port 4000]                        start the optional Web UI (source repo only)
+  crawldna runs [list|rm <id…>|clear|path]            manage cached runs
+  crawldna --help · --version
 
 The crawler is CLI- and library-first; the Web UI is an optional frontend that
 ships only with the source repository (not the npm package), so it never weighs
-down a \`sagecrawl\` dependency. \`serve\` explains how to get it if it isn't present.
+down a \`crawldna\` dependency. \`serve\` explains how to get it if it isn't present.
 
 Two phases. The CRAWL extracts what your task asks for, VERBATIM — one faithful
 .md per link (+ manifest.json). Every run is saved automatically to the runs cache
 (${cacheRoot()}), and every kept page is journaled to disk AS IT IS CAPTURED — a
-crash or Ctrl-C never loses extracted content: \`sagecrawl resume <runId>\` completes
+crash or Ctrl-C never loses extracted content: \`crawldna resume <runId>\` completes
 the run from where it stopped (flags override the saved options; an API key is
 never stored, so pass --api-key or set the env var again when resuming).
 RESHAPE is separate and optional: turn that extraction into tables, splits or
-filtered subsets with \`sagecrawl reshape <runId> --ask "…"\` (or Reshape in the Web
+filtered subsets with \`crawldna reshape <runId> --ask "…"\` (or Reshape in the Web
 UI). It works over the saved files, as many times as you like — crawl once,
 reshape many times.
 
@@ -77,7 +77,7 @@ Options:
   --base-url <url>       API base URL for --provider openai
                          (e.g. https://api.openai.com/v1, https://openrouter.ai/api/v1)
   --api-key <key>        API key for --provider openai
-                         (or set SAGECRAWL_API_KEY / OPENAI_API_KEY in the environment)
+                         (or set CRAWLDNA_API_KEY / OPENAI_API_KEY in the environment)
   --browser <mode>       never | auto | always   (default: ${DEFAULT_OPTIONS.browser})
   --concurrency <n>      parallel page fetches (default: ${DEFAULT_OPTIONS.concurrency})
   --max-pages <n>        safety cap, 0 = unlimited (default: ${DEFAULT_OPTIONS.maxPages})
@@ -121,19 +121,19 @@ Reshape (Phase 2 — over a saved run):
                          the crawled sources; unverifiable ones are flagged in the file)
 
 Examples:
-  sagecrawl https://docusaurus.io/docs --task "Extract all documentation"
-  sagecrawl https://pizzeria.example/menu --task "Extract the full menu"
-  sagecrawl https://site.dev --no-ai --max-pages 50        # classic crawl + reveal, zero tokens
-  sagecrawl https://docs.dev --mode complete --model qwen3-coder:30b   # whole site, pages whole,
+  crawldna https://docusaurus.io/docs --task "Extract all documentation"
+  crawldna https://pizzeria.example/menu --task "Extract the full menu"
+  crawldna https://site.dev --no-ai --max-pages 50        # classic crawl + reveal, zero tokens
+  crawldna https://docs.dev --mode complete --model qwen3-coder:30b   # whole site, pages whole,
                                                            # zero link-gate/scope calls
-  sagecrawl https://hotel.example --mode targeted --task "room prices" --model qwen3-coder:30b
-  sagecrawl --url https://a.dev --task "Get pricing" --url https://b.dev --task "Get API docs"
-  OPENAI_API_KEY=sk-… sagecrawl https://docs.dev --provider openai \\
+  crawldna https://hotel.example --mode targeted --task "room prices" --model qwen3-coder:30b
+  crawldna --url https://a.dev --task "Get pricing" --url https://b.dev --task "Get API docs"
+  OPENAI_API_KEY=sk-… crawldna https://docs.dev --provider openai \\
     --base-url https://api.openai.com/v1 --model gpt-4o-mini
-  sagecrawl reshape 20260615-084021-3f9c1a --ask "make a table of the prices"
-  sagecrawl runs                # list cached runs
-  sagecrawl runs rm 20260615-084021-3f9c1a
-  sagecrawl serve --port 4000
+  crawldna reshape 20260615-084021-3f9c1a --ask "make a table of the prices"
+  crawldna runs                # list cached runs
+  crawldna runs rm 20260615-084021-3f9c1a
+  crawldna serve --port 4000
 `;
 
 const OPTION_CONFIG = {
@@ -196,7 +196,7 @@ async function buildTargets(values, positionals) {
 
 function optionsFromFlags(values) {
   // The CLI is an app, not a library call: it always persists the run to the cache
-  // (rooted at the current working directory) so `sagecrawl runs` and `sagecrawl reshape`
+  // (rooted at the current working directory) so `crawldna runs` and `crawldna reshape`
   // can find it afterwards. Library callers of crawlDocs save only on opt-in.
   const o = { save: true };
   if (values.model) o.model = values.model;
@@ -300,7 +300,7 @@ function renderEvent(ev) {
 // gracefully, print the final summary. Shared by `crawl` and `resume`.
 async function driveRun(run) {
   const onSigint = () => {
-    process.stdout.write(c(C.yellow, '\nStopping (graceful)… the run stays resumable: sagecrawl resume <runId>\n'));
+    process.stdout.write(c(C.yellow, '\nStopping (graceful)… the run stays resumable: crawldna resume <runId>\n'));
     run.stop();
   };
   process.on('SIGINT', onSigint);
@@ -371,7 +371,7 @@ async function runCrawl(values, positionals) {
 async function resumeCommand(args, values) {
   const runId = args[0];
   if (!runId) {
-    process.stderr.write(c(C.red, 'Usage: sagecrawl resume <runId> [options]\n'));
+    process.stderr.write(c(C.red, 'Usage: crawldna resume <runId> [options]\n'));
     process.exitCode = 1;
     return;
   }
@@ -391,7 +391,7 @@ async function reshapeCommand(args, values) {
   const runId = args[0];
   const message = values.ask || (values.task && values.task[0]);
   if (!runId || !message) {
-    process.stderr.write(c(C.red, 'Usage: sagecrawl reshape <runId> --ask "<request>" [--scan <id>]\n'));
+    process.stderr.write(c(C.red, 'Usage: crawldna reshape <runId> --ask "<request>" [--scan <id>]\n'));
     process.exitCode = 1;
     return;
   }
@@ -462,7 +462,7 @@ async function runsCommand(args, values) {
   if (sub === 'rm' || sub === 'remove' || sub === 'delete') {
     const ids = args.slice(1);
     if (!ids.length) {
-      process.stderr.write(c(C.red, 'Usage: sagecrawl runs rm <id> [<id> …]\n'));
+      process.stderr.write(c(C.red, 'Usage: crawldna runs rm <id> [<id> …]\n'));
       process.exitCode = 1;
       return;
     }
@@ -497,9 +497,9 @@ async function runsCommand(args, values) {
     // voluntary Stop. Both keep their journal and can be completed with resume.
     const status =
       r.status === 'running'
-        ? '  ' + c(C.yellow, `⏸ interrupted — resume: sagecrawl resume ${r.id}`)
+        ? '  ' + c(C.yellow, `⏸ interrupted — resume: crawldna resume ${r.id}`)
         : r.status === 'stopped'
-          ? '  ' + c(C.yellow, `⏸ stopped — resume: sagecrawl resume ${r.id}`)
+          ? '  ' + c(C.yellow, `⏸ stopped — resume: crawldna resume ${r.id}`)
           : '';
     process.stdout.write(`  ${c(C.cyan, r.id)}  ${c(C.dim, fmtDate(r.createdAt))}${status}\n`);
     process.stdout.write(`    ${r.pages} page(s) · ${scans.length} link(s) → ${nFiles} file(s)\n`);
@@ -511,7 +511,7 @@ async function runsCommand(args, values) {
       );
     }
   }
-  process.stdout.write(`\n${c(C.dim, 'Delete: sagecrawl runs rm <id>   ·   clear all: sagecrawl runs clear')}\n`);
+  process.stdout.write(`\n${c(C.dim, 'Delete: crawldna runs rm <id>   ·   clear all: crawldna runs clear')}\n`);
 }
 
 async function main() {
@@ -538,7 +538,7 @@ async function main() {
 
   if (values.version || positionals[0] === 'version') {
     const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
-    process.stdout.write(`sagecrawl ${pkg.version}\n`);
+    process.stdout.write(`crawldna ${pkg.version}\n`);
     return;
   }
 
@@ -559,10 +559,10 @@ async function main() {
         c(C.yellow, '\nThe Web UI is optional and not bundled with the npm package') +
           ' (to keep it lightweight).\n\n' +
           'The crawler works fully without it — use the CLI or the library API:\n' +
-          c(C.cyan, '  sagecrawl <url> --task "…"   --model qwen3-coder:30b\n') +
-          c(C.cyan, "  import { crawlDocs } from 'sagecrawl'\n") +
+          c(C.cyan, '  crawldna <url> --task "…"   --model qwen3-coder:30b\n') +
+          c(C.cyan, "  import { crawlDocs } from 'crawldna'\n") +
           '\nTo use the Web UI, run it from the source repository:\n' +
-          c(C.cyan, '  git clone <sagecrawl repo> && cd sagecrawl\n') +
+          c(C.cyan, '  git clone <crawldna repo> && cd crawldna\n') +
           c(C.cyan, '  npm install && npm run serve\n'),
       );
       process.exitCode = 1;

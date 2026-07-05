@@ -1,4 +1,4 @@
-// Type definitions for sagecrawl — the public API of `src/index.mjs`.
+// Type definitions for crawldna — the public API of `src/index.mjs`.
 // Hand-written (the source is plain ESM JavaScript). Kept in sync with
 // DEFAULT_OPTIONS and the `crawlDocs` result shape documented in README.md.
 
@@ -61,7 +61,7 @@ export interface CrawlOptions {
   mode?: CrawlMode;
   /** API base URL for `provider: "openai"` (e.g. `https://api.openai.com/v1`). */
   baseUrl?: string;
-  /** API key for `provider: "openai"`. Falls back to `SAGECRAWL_API_KEY` / `OPENAI_API_KEY`. */
+  /** API key for `provider: "openai"`. Falls back to `CRAWLDNA_API_KEY` / `OPENAI_API_KEY`. */
   apiKey?: string;
   /** Override the Ollama server URL (default `http://127.0.0.1:11434`). */
   ollamaHost?: string;
@@ -113,7 +113,7 @@ export interface CrawlOptions {
    * turns saving on.
    */
   save?: boolean;
-  /** Where to save when saving is on. Default `<cwd>/.sagecrawl/runs`. */
+  /** Where to save when saving is on. Default `<cwd>/.crawldna/runs`. */
   cacheDir?: string;
   /**
    * Also package one identifiable Markdown document per page (with metadata + a stable
