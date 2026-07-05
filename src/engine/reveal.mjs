@@ -673,7 +673,28 @@ export async function revealAll(page, ctx, url, task) {
   // page.meta / scan stats plus this warning — advisory, never blocking:
   // skeleton/placeholder boilerplate can false-positive, and a warning that
   // stopped the crawl would be worse than the gap it reports.
-  const hiddenResidualChars = lastPerception.hiddenResidualChars || 0;
+  // #9 — TRUTHFUL residual. The audit counts every element hidden in the FINAL state,
+  // but a mutually-exclusive panel (tab B once tab C is active) is hidden yet WAS
+  // captured when it was open — the audit's known false-positive. Subtract any hidden
+  // block whose text is already in the accumulated content, so the number reflects
+  // genuinely-UNREACHED text. Conservative (rule #1 — never mask a real gap): only a
+  // strong verbatim match (≥60 chars) counts as captured, and text past the inspected
+  // sample cap stays in the residual.
+  const markdown = acc.toMarkdown();
+  const capturedNorm = markdown.replace(/\s+/g, ' ').toLowerCase();
+  const hiddenTexts = lastPerception.hiddenTexts || [];
+  const rawResidual = lastPerception.hiddenResidualChars || 0;
+  let hiddenResidualChars = rawResidual;
+  if (hiddenTexts.length) {
+    const inspected = hiddenTexts.reduce((a, h) => a + (h.n || 0), 0);
+    let uncaptured = 0;
+    for (const h of hiddenTexts) {
+      const sample = String(h.s || '').replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 60);
+      if (sample.length >= 60 && capturedNorm.includes(sample)) continue; // already captured in an earlier state
+      uncaptured += h.n || 0;
+    }
+    hiddenResidualChars = uncaptured + Math.max(0, rawResidual - inspected); // uninspected chars stay counted
+  }
   if (hiddenResidualChars >= RESIDUAL_WARN_CHARS) {
     const words = Math.round(hiddenResidualChars / 6);
     ctx.emit({
@@ -690,7 +711,7 @@ export async function revealAll(page, ctx, url, task) {
 
   const links = [...allLinks.entries()].map(([href, label]) => ({ href, label }));
   return {
-    markdown: acc.toMarkdown(),
+    markdown,
     blocks: acc.toBlocks(), // raw { text, provenance } in capture order, for layout
     // The FAITHFUL per-state record: every DISTINCT captured state, whole and
     // verbatim (byte-identical repeats — a chrome click that changed no content —

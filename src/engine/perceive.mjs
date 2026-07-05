@@ -359,6 +359,11 @@ export async function perceive(page, { maxText = 2500, maxRevealers = 150, maxLi
       // FALL — so "residual ≈ 0" is a measured completeness statement, not a
       // judgment. It travels to page.meta / stats / a warning in the caller.
       let hiddenResidualChars = 0;
+      // A text sample per topmost-hidden block, so the caller can subtract text that was
+      // ALREADY captured in an earlier state: a mutually-exclusive tab/panel is hidden
+      // again once its sibling is active, but its content was captured when it was open —
+      // counting it as "still hidden" is the audit's known false-positive (#9).
+      const hiddenTexts = [];
       {
         const skip = (el) =>
           el.tagName === 'TEMPLATE' || el.tagName === 'SCRIPT' || el.tagName === 'STYLE' ||
@@ -370,7 +375,10 @@ export async function perceive(page, { maxText = 2500, maxRevealers = 150, maxLi
           if (skip(el)) continue;
           if (!isVisible(el)) {
             const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
-            if (t.length > 40) hiddenResidualChars += t.length;
+            if (t.length > 40) {
+              hiddenResidualChars += t.length;
+              if (hiddenTexts.length < 80) hiddenTexts.push({ n: t.length, s: t.slice(0, 140) });
+            }
             continue; // topmost hidden only — never double-count its children
           }
           for (const c of el.children) stack.push(c);
@@ -414,6 +422,7 @@ export async function perceive(page, { maxText = 2500, maxRevealers = 150, maxLi
         consentCandidates,
         links,
         hiddenResidualChars,
+        hiddenTexts,
         routes: [...routes],
         scrollHeight: document.body.scrollHeight,
       };

@@ -372,3 +372,32 @@ test('residual 0 stays silent — the measured all-clear', async () => {
   assert.equal(out.hiddenResidualChars, 0);
   assert.ok(!events.some((e) => e.type === 'warn' && e.reason === 'reveal-residual'));
 });
+
+test('#9 truthful residual: text captured in an earlier state is not counted as still-hidden', async () => {
+  const CAPTURED = 'Panel Bravo content: a full paragraph of real text captured when its tab is active on this page.';
+  const MISSING = 'Ghost panel content: a paragraph no control ever reveals, so it never enters the output at all here.';
+  const model = {
+    paragraphs: ['Base intro: visible starting text for this page, long enough to be a content block.'],
+    residual: CAPTURED.length + MISSING.length,
+    hidden: [{ n: CAPTURED.length, s: CAPTURED.slice(0, 140) }, { n: MISSING.length, s: MISSING.slice(0, 140) }],
+    scrollHeight: () => 1000,
+    perceive() {
+      const p = pagePerception(model, [rev(1, { label: 'Bravo' })]);
+      p.hiddenTexts = model.hidden; // both panels report as hidden in the final state
+      p.hiddenResidualChars = model.residual;
+      return p;
+    },
+    html: () => htmlOf(model),
+    click(id) {
+      if (id === 1) model.paragraphs.push(CAPTURED); // clicking the tab captures its panel
+    },
+  };
+  const events = [];
+  const out = await revealAll(makePage(model), baseCtx(NONE, events), 'https://fake.site/page', 'estrai tutto');
+  assert.ok(out.markdown.includes('Panel Bravo content'), 'the panel WAS captured');
+  assert.ok(out.hiddenResidualChars < model.residual, 'the captured-but-hidden panel is subtracted from the residual');
+  assert.ok(
+    Math.abs(out.hiddenResidualChars - MISSING.length) <= 5,
+    `residual reflects only genuinely-missing text (got ${out.hiddenResidualChars}, expected ~${MISSING.length})`,
+  );
+});
