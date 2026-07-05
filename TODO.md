@@ -102,7 +102,7 @@ la modifica e confrontare numero di pagine tenute, byte totali, e i blocchi rive
 | 6 | Crawl incrementale (ETag / Last-Modified / lastmod) | consumi (enorme per refdna) | Medio | ☐ da fare |
 | 7 | Dedup near-duplicate con SimHash | precisione output + consumi | Medio | ✅ fatto (2026-07-01 opt-in; 2026-07-02 tier mirror/variante DEFAULT-ON + stop espansione dai duplicati) |
 | 8 | Estrazione stile Trafilatura (pruning per densità link) | precisione | Medio | ✅ fatto (2026-07-01) |
-| 9 | Rinforzo reveal: accessibility-tree / Set-of-Marks | precisione (casi difficili) | Alto | ☐ da fare |
+| 9 | Rinforzo reveal: accessibility-tree / Set-of-Marks | precisione (casi difficili) | Alto | 🟡 misura veritiera fatta (`b08d59a`); a11y/vision de-prioritizzato (residuo reale ~5%) |
 
 **Gruppo B — Rispetto della task & fruibilità dell'output (generale)**
 
@@ -572,7 +572,34 @@ neurale per il contenuto principale.
 ---
 
 ## #9 — Rinforzo reveal: accessibility-tree / Set-of-Marks
-**Effetto:** precisione (casi difficili) · **Sforzo:** Alto · **Stato:** ☐
+**Effetto:** precisione (casi difficili) · **Sforzo:** Alto · **Stato:** 🟡 misura
+veritiera FATTA (2026-07-05, commit `b08d59a`); a11y/vision DE-PRIORITIZZATO (target reale
+~5% e raro)
+
+> **Scoperta 2026-07-05 (audit di una run no-AI a 504 pagine).** Il segnale che motivava
+> il #9 — `reveal-residual` su **211 pagine (~42%)** ("contenuto ancora nascosto, nessun
+> controllo lo rivela") — era per **~90% un FALSO POSITIVO**. L'exit audit (#21d) contava
+> come "nascosto" OGNI elemento invisibile nello stato FINALE, ma un pannello mutuamente
+> esclusivo (tab B quando è attivo tab C) è nascosto pur essendo stato **catturato** quando
+> era aperto. Prova: il volume di contenuto era INVARIATO rispetto alle run precedenti → non
+> mancava nulla, l'audit gonfiava. Quindi il vero #9 per questi dati NON era costruire
+> a11y/vision per recuperare contenuto **già catturato** — era rendere la **misura onesta**.
+>
+> **Fatto (deterministico, no-AI, zero rischio motore):** `perceive` ritorna un campione di
+> testo per blocco nascosto; `reveal` sottrae dal residuo quelli il cui testo è **già
+> nell'accumulatore** (match verbatim ≥60 char; il testo oltre il cap di campionamento resta
+> contato, così un buco vero non è mai mascherato — regola #1). Cambia SOLO l'audit, non il
+> comportamento del reveal né il contenuto catturato. **Verificato dal vivo** (crawl no-AI 40
+> pagine): residuo "no control" da **~37% → 2/40 (~5%)** delle pagine. 230 test verdi (1
+> nuovo). File: `perceive.mjs` (campioni `hiddenTexts`), `reveal.mjs` (sottrazione + residuo
+> veritiero), `test/reveal-loop.test.mjs`.
+>
+> **Cosa resta del #9 (la metà "difficile", opzionale).** Le poche pagine (~5%) con residuo
+> REALE = contenuto dietro trigger che il DOM non espone (hover-only / eventi delegati senza
+> `cursor:pointer` né label — `perceive` scarta i cliccabili senza label a riga ~261). Il
+> ripiego a11y-tree/Set-of-Marks resta valido MA con target minuscolo e raro → basso ritorno.
+> Se lo si fa: parte DETERMINISTICA (a11y-role + rilassare il gate label in un passo di
+> fallback su residuo-vero alto) per il no-AI; Set-of-Marks (vision) solo in modalità AI.
 
 **Problema oggi.** Il rilevamento controlli è già ottimo (≈ browser-use: tag + ARIA +
 sniffer listener + visibilità). Resta il raro controllo **visivamente ovvio ma
