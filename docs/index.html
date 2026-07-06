@@ -265,7 +265,9 @@ footer{border-top:1px solid var(--b1);margin-top:24px}
       </div>
       <p class="cmp-note">Every state is captured whole and de-duplicated — the npm tab and the yarn
         tab both land in the output, byte-identical repeats don’t. When the loop ends, an audit
-        reports how much text, if any, is still out of reach.</p>
+        reports how much text, if any, is still out of reach — and if it’s hiding behind an
+        unlabelled control (a bare tab, a hover-only toggle), one deterministic fallback pass
+        goes back for it.</p>
     </div>
   </section>
 
@@ -421,7 +423,7 @@ footer{border-top:1px solid var(--b1);margin-top:24px}
       <div class="card">
         <div class="ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg></div>
         <h3>Completeness measured</h3>
-        <p>Every page ends with an audit of how much text stayed hidden. If something’s missing, you know — you don’t find out later.</p>
+        <p>Every page ends with an audit of how much text stayed hidden. A high residual behind unlabelled controls triggers one deterministic fallback pass to recover it; whatever survives is reported — you know, you don’t find out later.</p>
       </div>
       <div class="card">
         <div class="ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>

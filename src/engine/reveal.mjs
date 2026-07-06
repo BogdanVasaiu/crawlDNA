@@ -41,6 +41,28 @@ export const PAYLOAD_MIN = 200;
 export const RESIDUAL_WARN_CHARS = 1200;
 
 /**
+ * #9 — the TRUTHFUL residual: the raw hidden-char count MINUS any hidden block whose
+ * text is already in the captured markdown. A mutually-exclusive panel (tab B once
+ * tab C is active) is hidden in the final state yet WAS captured when it was open —
+ * the exit audit's known false-positive. Conservative (rule #1 — never mask a real
+ * gap): only a strong verbatim match (≥60 chars) counts as captured, and text past
+ * the inspected sample cap stays counted. Pure; exported for the tests and reused by
+ * the a11y fallback's re-check.
+ */
+export function truthfulResidual(rawResidual, hiddenTexts, markdown) {
+  if (!hiddenTexts || !hiddenTexts.length) return rawResidual;
+  const capturedNorm = String(markdown || '').replace(/\s+/g, ' ').toLowerCase();
+  const inspected = hiddenTexts.reduce((a, h) => a + (h.n || 0), 0);
+  let uncaptured = 0;
+  for (const h of hiddenTexts) {
+    const sample = String(h.s || '').replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 60);
+    if (sample.length >= 60 && capturedNorm.includes(sample)) continue; // captured in an earlier state
+    uncaptured += h.n || 0;
+  }
+  return uncaptured + Math.max(0, rawResidual - inspected); // uninspected chars stay counted
+}
+
+/**
  * #21b — rank approved controls by MEASURED signals, so the action budget goes
  * to provable content first: a closed disclosure (aria-expanded="false") is
  * mechanical proof there is something to open; a measured hidden payload
@@ -673,28 +695,74 @@ export async function revealAll(page, ctx, url, task) {
   // page.meta / scan stats plus this warning — advisory, never blocking:
   // skeleton/placeholder boilerplate can false-positive, and a warning that
   // stopped the crawl would be worse than the gap it reports.
-  // #9 — TRUTHFUL residual. The audit counts every element hidden in the FINAL state,
-  // but a mutually-exclusive panel (tab B once tab C is active) is hidden yet WAS
-  // captured when it was open — the audit's known false-positive. Subtract any hidden
-  // block whose text is already in the accumulated content, so the number reflects
-  // genuinely-UNREACHED text. Conservative (rule #1 — never mask a real gap): only a
-  // strong verbatim match (≥60 chars) counts as captured, and text past the inspected
-  // sample cap stays in the residual.
-  const markdown = acc.toMarkdown();
-  const capturedNorm = markdown.replace(/\s+/g, ' ').toLowerCase();
-  const hiddenTexts = lastPerception.hiddenTexts || [];
-  const rawResidual = lastPerception.hiddenResidualChars || 0;
-  let hiddenResidualChars = rawResidual;
-  if (hiddenTexts.length) {
-    const inspected = hiddenTexts.reduce((a, h) => a + (h.n || 0), 0);
-    let uncaptured = 0;
-    for (const h of hiddenTexts) {
-      const sample = String(h.s || '').replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 60);
-      if (sample.length >= 60 && capturedNorm.includes(sample)) continue; // already captured in an earlier state
-      uncaptured += h.n || 0;
+  // #9 — TRUTHFUL residual (truthfulResidual): the audit counts every element hidden
+  // in the FINAL state, but a mutually-exclusive panel captured when it was open is a
+  // known false-positive, so blocks whose text is already in the output are subtracted.
+  let markdown = acc.toMarkdown();
+  let hiddenResidualChars = truthfulResidual(
+    lastPerception.hiddenResidualChars || 0,
+    lastPerception.hiddenTexts || [],
+    markdown,
+  );
+
+  // #9 Phase 1 — A11Y FALLBACK on a HIGH REAL residual. The strict perception drops
+  // interactive elements with no label and no aria-controls (a bare role=tab, a
+  // listener-only div, a hover-triggered toggle). On the RARE page where real text is
+  // still hidden after the loop (residual high AFTER subtracting captured states) AND
+  // the action budget was NOT the limit (hitCap ⇒ a --max-actions problem, not a
+  // detection one), those unlabelled controls are the prime suspect. Re-perceive with
+  // the label gate relaxed (a11y role / listener as a second element source — no vision
+  // call), triage + click each NEW candidate once, and re-capture. Deterministic and
+  // no-AI-safe (triage approves every mechanical candidate with no model), ADDITIVE
+  // (rule #1 — it can only add content), bounded by RELAX_CAP and the budget. Runs only
+  // here, so normal pages (low residual) never pay for it. Honest limit: it treats
+  // these as in-place reveals (their usual shape) — a relaxed paginator is not walked;
+  // that stays the vision half of #9, deliberately deferred (tiny, rare target).
+  const RELAX_CAP = 8;
+  if (!hitCap && actions < maxActions && !ctx.shouldStop() && hiddenResidualChars >= RESIDUAL_WARN_CHARS) {
+    let clicked = 0;
+    for (let tries = 0; tries < RELAX_CAP && actions < maxActions && !ctx.shouldStop() && hiddenResidualChars >= RESIDUAL_WARN_CHARS; tries++) {
+      const relaxedPerception = await perceive(page, { relaxLabels: true });
+      lastPerception = relaxedPerception; // the final residual/warning reflects this state
+      const fresh = relaxedPerception.revealers.filter((r) => r.relaxed);
+      if (!fresh.length) break;
+      await triage(fresh);
+      const next = fresh
+        .filter((r) => decided.get(r.signature) && !doneLeaf.has(r.signature) && !shapeMuted(r))
+        .sort((a, b) => revealPriority(b) - revealPriority(a))[0];
+      if (!next) break;
+      actions++;
+      const res = await clickRevealer(page, next.id);
+      doneLeaf.add(next.signature);
+      if (res.navigatedTo) {
+        navLinks.add(res.navigatedTo); // a nav-away is a link, captured by the frontier
+        break;
+      }
+      const label = next.label && next.label.length <= 32 ? next.label : undefined;
+      const added = await capture(label, `${next.kind}:${next.label || 'a11y'}`, next.top || 0);
+      if (added) {
+        clicked++;
+        shapeFails.set(shapeKey(next), 0);
+      } else {
+        shapeFails.set(shapeKey(next), (shapeFails.get(shapeKey(next)) || 0) + 1);
+      }
+      markdown = acc.toMarkdown();
+      hiddenResidualChars = truthfulResidual(
+        relaxedPerception.hiddenResidualChars || 0,
+        relaxedPerception.hiddenTexts || [],
+        markdown,
+      );
     }
-    hiddenResidualChars = uncaptured + Math.max(0, rawResidual - inspected); // uninspected chars stay counted
+    if (clicked) {
+      ctx.emit({
+        type: 'action',
+        url,
+        action: 'reveal',
+        detail: `a11y fallback: revealed ${clicked} control(s) behind unlabelled triggers (high residual)`,
+      });
+    }
   }
+
   if (hiddenResidualChars >= RESIDUAL_WARN_CHARS) {
     const words = Math.round(hiddenResidualChars / 6);
     ctx.emit({

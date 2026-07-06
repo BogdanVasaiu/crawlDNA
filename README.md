@@ -313,7 +313,12 @@ and works the same way on any site — no per-framework special-casing.
    if a judge said no; a control that keeps *adding* content is re-clicked to
    saturation whatever its label's language; and at exit the engine measures the
    text still hidden — `meta.revealResidualChars` per page (`0` = measurably
-   drained), with an advisory warning when real mass remains.
+   drained), with an advisory warning when real mass remains. If that residual is
+   high and the action budget wasn't the limit, one **deterministic a11y-fallback
+   pass** re-scans with the label gate relaxed — reaching interactive elements that
+   carry an accessibility role or click listener but no text label (a bare
+   `role=tab`, a hover-only toggle) — and clicks those before giving up. No model,
+   no vision call; it only ever runs on that rare high-residual page.
 3. **Extract** the revealed content to clean, **verbatim** Markdown.
 4. **Decide relevance with AI** (for non-documentation tasks): keep only the
    sections that belong to the task — "extract the pizza menu", "extract the

@@ -102,7 +102,7 @@ la modifica e confrontare numero di pagine tenute, byte totali, e i blocchi rive
 | 6 | Crawl incrementale (ETag / Last-Modified / lastmod) | consumi (enorme per refdna) | Medio | ✅ fatto (2026-07-06) — lastmod-skip + HTTP 304 + hash-net, `--incremental` |
 | 7 | Dedup near-duplicate con SimHash | precisione output + consumi | Medio | ✅ fatto (2026-07-01 opt-in; 2026-07-02 tier mirror/variante DEFAULT-ON + stop espansione dai duplicati) |
 | 8 | Estrazione stile Trafilatura (pruning per densità link) | precisione | Medio | ✅ fatto (2026-07-01) |
-| 9 | Rinforzo reveal: accessibility-tree / Set-of-Marks | precisione (casi difficili) | Alto | 🟡 misura veritiera fatta (`b08d59a`); a11y/vision de-prioritizzato (residuo reale ~5%) |
+| 9 | Rinforzo reveal: accessibility-tree / Set-of-Marks | precisione (casi difficili) | Alto | 🟡 Fase 1 fatta (2026-07-06: a11y-role + gate label rilassato su residuo alto); Fase 2 (Set-of-Marks/vision) deferita (residuo reale ~5%) |
 
 **Gruppo B — Rispetto della task & fruibilità dell'output (generale)**
 
@@ -618,8 +618,32 @@ neurale per il contenuto principale.
 
 ## #9 — Rinforzo reveal: accessibility-tree / Set-of-Marks
 **Effetto:** precisione (casi difficili) · **Sforzo:** Alto · **Stato:** 🟡 misura
-veritiera FATTA (2026-07-05, commit `b08d59a`); a11y/vision DE-PRIORITIZZATO (target reale
+veritiera FATTA (2026-07-05, `b08d59a`) + **Fase 1 FATTA** (2026-07-06: a11y-role + gate
+label rilassato su residuo-vero alto); Fase 2 (Set-of-Marks/vision) DEFERITA (target reale
 ~5% e raro)
+
+> **Fase 1 — a11y-role + gate label rilassato (FATTA, 2026-07-06, deterministica, no-AI).**
+> Il gate di `perceive` (riga ~261) scarta i cliccabili interattivi **senza label e senza
+> aria-controls** (un `role=tab` nudo, un div listener-only, un toggle hover-only): quasi
+> sempre ridondanti → restano fuori di default, così le pagine normali restano snelle. Nuovo
+> parametro `perceive(page, { relaxLabels })`: quando il chiamante ESCALA su **residuo-vero
+> alto**, ammette quelli con un **segnale a11y meccanico** (ruolo ARIA/nativo interattivo,
+> listener sniffato, aria-expanded/pressed/selected) come seconda fonte — il segnale
+> dell'accessibility-tree letto dal DOM, **senza AX snapshot né vision**; taggati `relaxed`.
+> In `revealAll`, dopo il loop stretto: se il residuo-vero (via il puro `truthfulResidual`,
+> estratto) è ≥ `RESIDUAL_WARN_CHARS` **E** non ho esaurito il budget (`hitCap` ⇒ è un
+> problema di `--max-actions`, non di rilevamento), un passo di **fallback bounded**
+> (`RELAX_CAP` 8): ri-percepisce relaxed, triage (no-AI approva tutto), clicca ogni nuovo
+> controllo `relaxed`, ricattura, ricalcola il residuo. **Additivo** (regola #1 — può solo
+> aggiungere), gira SOLO su quella rara pagina ad alto residuo; il warning `reveal-residual`
+> finale riflette il residuo POST-fallback. Evento `action: reveal` "a11y fallback: revealed
+> N control(s)…". File: `src/engine/perceive.mjs` (param + gate + flag `relaxed`),
+> `src/engine/reveal.mjs` (`truthfulResidual` esportato + fallback + warning post-fallback),
+> `test/reveal-loop.test.mjs` (2 test: fallback drena il residuo su pagina alta; nessun pass
+> relaxed su pagina bassa). **258 test verdi.** Limite onesto (nel codice): tratta questi
+> come reveal in-place (la loro forma tipica) — un paginatore relaxed NON è percorso; è la
+> Fase 2. ⏳ Verifica dal vivo pendente (il codice DOM di perceive gira solo nel browser vero;
+> caso raro → node --check + trace, come per #28).
 
 > **Scoperta 2026-07-05 (audit di una run no-AI a 504 pagine).** Il segnale che motivava
 > il #9 — `reveal-residual` su **211 pagine (~42%)** ("contenuto ancora nascosto, nessun
@@ -639,12 +663,14 @@ veritiera FATTA (2026-07-05, commit `b08d59a`); a11y/vision DE-PRIORITIZZATO (ta
 > nuovo). File: `perceive.mjs` (campioni `hiddenTexts`), `reveal.mjs` (sottrazione + residuo
 > veritiero), `test/reveal-loop.test.mjs`.
 >
-> **Cosa resta del #9 (la metà "difficile", opzionale).** Le poche pagine (~5%) con residuo
-> REALE = contenuto dietro trigger che il DOM non espone (hover-only / eventi delegati senza
-> `cursor:pointer` né label — `perceive` scarta i cliccabili senza label a riga ~261). Il
-> ripiego a11y-tree/Set-of-Marks resta valido MA con target minuscolo e raro → basso ritorno.
-> Se lo si fa: parte DETERMINISTICA (a11y-role + rilassare il gate label in un passo di
-> fallback su residuo-vero alto) per il no-AI; Set-of-Marks (vision) solo in modalità AI.
+> **Cosa resta del #9 dopo la Fase 1 (la metà "difficile", opzionale = Fase 2).** La Fase 1
+> copre il caso "controllo con segnale a11y/listener ma senza label". Resta il controllo
+> **visivamente ovvio ma INVISIBILE ANCHE all'a11y-tree** (hover-only puro / eventi delegati
+> senza ruolo, classe né `cursor:pointer`), che nemmeno il gate rilassato prende. Per quello
+> servirebbe **Set-of-Marks** (screenshot con elementi numerati → Vision LLM), solo in
+> modalità AI. Target minuscolo e raro (~5% delle pagine, e di quel 5% solo la frazione senza
+> alcun segnale DOM) → basso ritorno, alto costo (screenshot + vision per pagina, rompe la
+> simmetria no-AI): **deferito** finché un sito reale non lo richiede.
 
 **Problema oggi.** Il rilevamento controlli è già ottimo (≈ browser-use: tag + ARIA +
 sniffer listener + visibilità). Resta il raro controllo **visivamente ovvio ma

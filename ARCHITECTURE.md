@@ -221,6 +221,16 @@ The loop that exhaustively surfaces hidden content:
 5. **`BlockAccumulator`** (in [`extract.mjs`](src/extract.mjs)) accumulates the
    *new* Markdown blocks from each state, de-duplicated by a normalized SHA-1 hash,
    in capture order.
+6. **Exit audit + a11y fallback.** At the end, a **measured residual** counts how
+   much real text is still hidden — subtracting panels already captured in an earlier
+   state, so mutually-exclusive tabs don't inflate it (the *truthful* count). If that
+   residual is high **and** the action budget wasn't the limit, one **deterministic
+   fallback pass** re-perceives with the label gate *relaxed* — admitting interactive
+   elements that carry an accessibility role / sniffed listener but **no text label**
+   (a bare `role=tab`, a hover-only toggle) — and clicks those, in case they hid the
+   missing text. It's **additive** (can only add content), **no-AI-safe**, and runs
+   *only* on that rare high-residual page. A residual that survives becomes an advisory
+   `reveal-residual` warning (never blocking).
 
 **Reliability:** if the model is unavailable, reveal falls back to the
 per-candidate `heuristic` flag, so coverage never drops below the old

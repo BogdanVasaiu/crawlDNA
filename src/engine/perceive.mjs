@@ -9,9 +9,9 @@
 
 import { createHash } from 'node:crypto';
 
-export async function perceive(page, { maxText = 2500, maxRevealers = 150, maxLinks = 400 } = {}) {
+export async function perceive(page, { maxText = 2500, maxRevealers = 150, maxLinks = 400, relaxLabels = false } = {}) {
   const data = await page.evaluate(
-    ({ maxRevealers, maxLinks }) => {
+    ({ maxRevealers, maxLinks, relaxLabels }) => {
       // Clear the markers left by PREVIOUS perceive passes first. Ids restart from 0
       // on every pass; without this, an element stamped in an earlier pass keeps its
       // stale id while a different element gets the same number this pass — and the
@@ -258,7 +258,28 @@ export async function perceive(page, { maxText = 2500, maxRevealers = 150, maxLi
           ariaExpanded != null || ariaControls || ariaSelected != null || ariaPressed != null ||
           hasListener || pointer || interactiveClass;
         if (!interactive) continue;
-        if (!label && !ariaControls && tag !== 'details' && tag !== 'summary') continue;
+        // #9 Phase 1 — the strict pass DROPS an interactive element that has no
+        // label and no aria-controls (a bare role=tab, a listener-only div, a
+        // hover-triggered toggle). Almost always redundant, so they stay out by
+        // default — that keeps normal pages lean. When the CALLER escalates on a
+        // HIGH REAL residual (`relaxLabels`, the reveal loop's last-ditch fallback),
+        // admit those that still carry a MECHANICAL accessibility signal — an
+        // interactive ARIA/native role, a sniffed listener, or an aria-*
+        // expanded/pressed/selected state (the accessibility-tree signal, read off
+        // the DOM, no extra AX snapshot / vision call). A weak signal alone (pointer
+        // cursor or a class-name match) is NOT enough here: it would flood the
+        // fallback with decorative rows. Admitted candidates are tagged `relaxed` so
+        // the loop clicks only the genuinely-new ones.
+        let relaxed = false;
+        if (!label && !ariaControls && tag !== 'details' && tag !== 'summary') {
+          const a11ySignal =
+            ['button', 'summary', 'select'].includes(tag) ||
+            ['button', 'tab', 'switch', 'option', 'checkbox', 'combobox', 'menuitemradio'].includes(role) ||
+            ariaExpanded != null || ariaSelected != null || ariaPressed != null ||
+            hasListener;
+          if (!(relaxLabels && a11ySignal)) continue;
+          relaxed = true;
+        }
 
         let kind = 'control';
         if (LOADMORE.test(label)) kind = 'loadmore';
@@ -322,7 +343,7 @@ export async function perceive(page, { maxText = 2500, maxRevealers = 150, maxLi
         // their left-to-right discovery order (stable). Read once, here.
         const rct = el.getBoundingClientRect();
         const top = Math.round(rct.top + (window.scrollY || window.pageYOffset || 0));
-        revealers.push({ id: cid, kind, label, role, cls: cls.slice(0, 60), context: nearestHeading(el), heuristic, signature, hiddenPayload, expanded, top, chrome });
+        revealers.push({ id: cid, kind, label, role, cls: cls.slice(0, 60), context: nearestHeading(el), heuristic, signature, hiddenPayload, expanded, top, chrome, relaxed });
       }
 
       // ---- links: every destination on the page (nav/footer/app-bar included)
@@ -427,7 +448,7 @@ export async function perceive(page, { maxText = 2500, maxRevealers = 150, maxLi
         scrollHeight: document.body.scrollHeight,
       };
     },
-    { maxRevealers, maxLinks },
+    { maxRevealers, maxLinks, relaxLabels },
   );
 
   data.mainText = data.mainText.slice(0, maxText);

@@ -42,7 +42,7 @@ function makePage(model) {
     },
     async evaluate(fn, args) {
       const src = fn.toString();
-      if (args && typeof args === 'object' && 'maxRevealers' in args) return model.perceive();
+      if (args && typeof args === 'object' && 'maxRevealers' in args) return model.perceive(args);
       if (src.includes('outerHTML')) return model.html();
       if (src.includes('innerText.length')) throw new Error('no DOM here');
       if (src.includes('scrollBy')) return undefined;
@@ -356,6 +356,73 @@ test('a large hidden residual at exit is returned and warned about — advisory,
   assert.ok(warn, 'the residual produces the advisory warning');
   assert.match(warn.message, /~500 words/, 'the warning carries the measured number');
   assert.ok(out.markdown.includes('Visible intro text'), 'the page is still captured — advisory means advisory');
+});
+
+// --- #9 Phase 1: the a11y fallback on a high REAL residual --------------------
+
+test('#9 Phase 1: a high real residual arms the a11y fallback — an unlabelled control reveals the missing text', async () => {
+  // A paragraph hidden behind a BARE role=tab with no label: the strict pass drops
+  // it (no label, no aria-controls), so the main loop finds nothing and exits with a
+  // high residual. Only the relaxed pass (relaxLabels) surfaces it as id 9.
+  const MISSING =
+    'Ghost tab content: a long paragraph of genuinely-unreached text hidden behind an unlabelled a11y control. '.repeat(
+      14,
+    ); // > RESIDUAL_WARN_CHARS
+  const model = {
+    paragraphs: ['Base intro: visible starting text, but most of the page hides behind an unlabelled control.'],
+    open: false,
+    scrollHeight: () => 1000,
+    perceive(args) {
+      const revs = [];
+      if (args && args.relaxLabels && !model.open) {
+        revs.push(rev(9, { label: '', role: 'tab', kind: 'tab', signature: 'sig-ghost', relaxed: true }));
+      }
+      const p = pagePerception(model, revs);
+      p.hiddenResidualChars = model.open ? 0 : MISSING.length;
+      p.hiddenTexts = model.open ? [] : [{ n: MISSING.length, s: MISSING.slice(0, 140) }];
+      return p;
+    },
+    html: () => htmlOf(model),
+    click(id) {
+      if (id === 9 && !model.open) {
+        model.open = true;
+        model.paragraphs.push(MISSING);
+      }
+    },
+  };
+  const events = [];
+  const out = await revealAll(makePage(model), baseCtx(NONE, events), 'https://fake.site/page', 'estrai tutto');
+  assert.ok(out.markdown.includes('Ghost tab content'), 'the a11y fallback revealed the unlabelled control content');
+  assert.ok(out.hiddenResidualChars < MISSING.length, 'the residual dropped once the hidden text was captured');
+  assert.ok(
+    events.some((e) => e.type === 'action' && /a11y fallback/.test(e.detail || '')),
+    'the fallback is announced',
+  );
+  assert.ok(
+    !events.some((e) => e.type === 'warn' && e.reason === 'reveal-residual'),
+    'no residual warning survives once the fallback drained it',
+  );
+});
+
+test('#9 Phase 1: a low residual never asks for the relaxed pass (normal pages stay lean)', async () => {
+  let relaxedAsked = 0;
+  const model = {
+    paragraphs: ['A visible page with only a little hidden text, comfortably below the residual threshold.'],
+    scrollHeight: () => 1000,
+    perceive(args) {
+      if (args && args.relaxLabels) relaxedAsked++;
+      const p = pagePerception(model, []);
+      p.hiddenResidualChars = 200; // well under RESIDUAL_WARN_CHARS (1200)
+      p.hiddenTexts = [{ n: 200, s: 'x'.repeat(140) }];
+      return p;
+    },
+    html: () => htmlOf(model),
+    click() {},
+  };
+  const events = [];
+  await revealAll(makePage(model), baseCtx(NONE, events), 'https://fake.site/page', 'estrai tutto');
+  assert.equal(relaxedAsked, 0, 'the relaxed a11y pass is never requested when the residual is low');
+  assert.ok(!events.some((e) => /a11y fallback/.test(e.detail || '')), 'no fallback runs on a lean page');
 });
 
 test('residual 0 stays silent — the measured all-clear', async () => {
