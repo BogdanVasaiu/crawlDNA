@@ -1,3 +1,31 @@
+crawlDNA
+
+Copyright (C) 2026 Bogdan Marian Vasaiu (https://github.com/BogdanVasaiu/crawlDNA)
+
+crawlDNA is free software, licensed under the terms of the GNU Affero General
+Public License, Version 3.0 only (AGPL-3.0-only). The complete and unmodified
+text of that license follows the notice below.
+
+---
+
+BRAND RESERVATION NOTICE
+
+The name "crawlDNA", the crawlDNA logo, and the domain crawldna.com are the
+exclusive intellectual property of Bogdan Marian Vasaiu. The AGPL-3.0 license
+below governs the SOFTWARE only; it does NOT grant any rights to use the
+crawlDNA name, logo, or brand in any manner that implies official affiliation,
+endorsement, or origin — including but not limited to forks, derivative works,
+redistributions, or commercial products. This reservation of trade names,
+trademarks, and service marks is expressly permitted by section 7(e) of the
+GNU Affero General Public License.
+
+Permitted uses of the brand include factual attribution (e.g., "based on
+crawlDNA by Bogdan Marian Vasaiu") and links to the official repository at
+https://github.com/BogdanVasaiu/crawlDNA. Any other use of the crawlDNA brand
+requires prior written permission from the copyright holder.
+
+---
+
                     GNU AFFERO GENERAL PUBLIC LICENSE
                        Version 3, 19 November 2007
 
