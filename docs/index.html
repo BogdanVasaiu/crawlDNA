@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>crawlDNA — extract everything a page knows, even what it hides</title>
+<meta name="description" content="An open-source web crawler that opens pages in a real browser, reveals content hidden behind tabs, accordions and 'load more', and returns clean, verbatim Markdown. AI optional. No per-site rules.">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&family=DM+Mono:wght@400;500&display=swap');
+
+:root{
+  --bg:#09090b; --s1:#101013; --s2:#141417; --s3:#1a1a1f; --s4:#202026;
+  --b1:#1e1e24; --b2:#28282f; --b3:#35353d;
+  --t1:#f4f4f6; --t2:#9898aa; --t3:#70708a; --t4:#55556a;
+  --a:#20e3a0; --a-dim:rgba(32,227,160,.10); --a-glow:rgba(32,227,160,.22); --a-bd:rgba(32,227,160,.24);
+  --ai:#818cf8; --ai-dim:rgba(129,140,248,.12); --ai-bd:rgba(129,140,248,.30);
+  --pink:#f778ba; --amb:#f59e0b;
+  --font:'DM Sans',system-ui,sans-serif; --mono:'DM Mono','Fira Mono',monospace;
+  --r-sm:7px; --r:10px; --r-lg:14px; --r-xl:20px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--t1);font-family:var(--font);font-size:16px;line-height:1.6;
+  -webkit-font-smoothing:antialiased;overflow-x:hidden}
+::selection{background:var(--a-glow)}
+a{color:inherit;text-decoration:none}
+code{font-family:var(--mono);font-size:.86em;background:var(--s3);border:1px solid var(--b1);
+  border-radius:5px;padding:1px 6px;color:#d6d6e0}
+::-webkit-scrollbar{width:9px;height:9px}::-webkit-scrollbar-thumb{background:var(--b2);border-radius:99px}
+
+/* ── NAV ──────────────────────────────────────── */
+nav{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:16px;
+  padding:14px clamp(20px,5vw,52px);background:rgba(9,9,11,.72);backdrop-filter:blur(14px);
+  border-bottom:1px solid var(--b1)}
+.logo{display:flex;align-items:center;gap:10px}
+.logo svg{width:26px;height:41px;flex-shrink:0}
+#brand{font-family:var(--mono);font-size:19px;font-weight:500;letter-spacing:-.01em;line-height:1;
+  height:1em;display:flex;align-items:flex-end}
+.crawl{color:var(--t1)}
+.dna{color:var(--a)}
+.cursor{display:inline-block;width:.5em;height:2px;background:var(--a);border-radius:1px;margin-left:2px;
+  align-self:flex-end;animation:blink 1s step-end infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+.nav-right{margin-left:auto;display:flex;align-items:center;gap:8px}
+.nav-link{font-size:13.5px;color:var(--t2);padding:7px 12px;border-radius:var(--r-sm);transition:.15s}
+.nav-link:hover{color:var(--t1);background:var(--s2)}
+.gh{display:inline-flex;align-items:center;gap:7px;font-size:13px;color:var(--t2);background:var(--s2);
+  border:1px solid var(--b2);border-radius:var(--r-sm);padding:7px 12px;transition:.15s}
+.gh:hover{color:var(--t1);border-color:var(--b3)}
+
+/* ── LAYOUT ───────────────────────────────────── */
+main{max-width:1080px;margin:0 auto;padding:0 clamp(20px,5vw,52px)}
+section{padding:80px 0;border-top:1px solid transparent}
+.kicker{font-family:var(--mono);font-size:11.5px;letter-spacing:.18em;text-transform:uppercase;
+  color:var(--a);margin-bottom:15px}
+h1{font-size:clamp(36px,6.4vw,62px);font-weight:600;line-height:1.04;letter-spacing:-.028em}
+h1 .muted{color:var(--t3)}
+h2{font-size:clamp(26px,3.6vw,36px);font-weight:600;letter-spacing:-.022em;line-height:1.12}
+.lede{color:var(--t2);font-size:clamp(16px,2vw,18px);max-width:60ch;line-height:1.62}
+.sec-head{max-width:64ch;margin-bottom:30px}
+.sec-head p{color:var(--t2);margin-top:12px;font-size:16.5px}
+
+/* ── HERO ─────────────────────────────────────── */
+.hero{display:grid;grid-template-columns:1.05fr .95fr;gap:48px;align-items:center;
+  padding:clamp(56px,8vw,96px) 0 72px;position:relative}
+.hero::before{content:'';position:absolute;top:-160px;right:-80px;width:640px;height:520px;max-width:90vw;
+  background:radial-gradient(ellipse at center,var(--a-glow),transparent 60%);filter:blur(30px);
+  opacity:.55;pointer-events:none;z-index:-1}
+.hero h1{margin-bottom:22px}
+.hero .lede{margin-bottom:30px}
+.cta{display:flex;flex-wrap:wrap;gap:13px;align-items:center}
+.term{display:inline-flex;align-items:center;gap:12px;font-family:var(--mono);font-size:13.5px;
+  background:var(--s1);border:1px solid var(--b2);border-radius:var(--r);padding:11px 14px;color:var(--t1)}
+.term .d{color:var(--a)}
+.term button{background:none;border:0;color:var(--t3);cursor:pointer;font-size:11.5px;font-family:var(--mono);
+  padding:3px 7px;border-radius:5px;transition:.15s}
+.term button:hover{color:var(--a);background:var(--a-dim)}
+.btn{display:inline-flex;align-items:center;gap:8px;font-size:14.5px;font-weight:600;padding:12px 20px;
+  border-radius:var(--r);cursor:pointer;transition:.15s;border:1px solid transparent}
+.btn-primary{background:var(--a);color:#04150e}
+.btn-primary:hover{filter:brightness(1.08);box-shadow:0 0 0 4px var(--a-dim)}
+
+/* reveal illustration in hero */
+.reveal-art{background:var(--s1);border:1px solid var(--b2);border-radius:var(--r-lg);padding:14px;
+  box-shadow:0 24px 60px rgba(0,0,0,.5)}
+.ra-bar{display:flex;gap:6px;padding:2px 4px 12px}
+.ra-dot{width:9px;height:9px;border-radius:99px;background:var(--b3)}
+.ra-row{height:9px;border-radius:5px;background:var(--b2);margin:9px 4px}
+.ra-row.s{width:60%}.ra-row.m{width:82%}
+.ra-panel{margin:10px 4px;border:1px solid var(--b2);border-radius:9px;overflow:hidden;background:var(--s2)}
+.ra-tab{display:flex;gap:0;font-family:var(--mono);font-size:10.5px}
+.ra-tab span{padding:7px 11px;color:var(--t3);border-bottom:2px solid transparent}
+.ra-tab span.on{color:var(--a);border-bottom-color:var(--a);background:var(--a-dim)}
+.ra-hidden{padding:11px;background:linear-gradient(var(--a-dim),transparent)}
+.ra-hidden .ra-row{background:rgba(32,227,160,.32);margin:8px 0}
+.ra-cta{display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:10.5px;color:var(--a);
+  padding:4px 4px 2px}
+.ra-cta svg{width:12px;height:12px}
+
+/* ── STAT STRIP ───────────────────────────────── */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--b1);
+  border:1px solid var(--b1);border-radius:var(--r-lg);overflow:hidden;margin-top:8px}
+.stat{background:var(--s1);padding:22px 20px}
+.stat .k{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:15px;font-weight:500;
+  color:var(--a);letter-spacing:-.01em;line-height:1.3}
+.stat .k::before{content:"";width:6px;height:6px;border-radius:99px;background:var(--a);flex-shrink:0;
+  box-shadow:0 0 0 3px var(--a-dim)}
+.stat .l{font-size:13px;color:var(--t2);margin-top:7px;line-height:1.5}
+
+/* ── COMPARISON BAR ───────────────────────────── */
+.compare{background:var(--s1);border:1px solid var(--b1);border-radius:var(--r-lg);padding:28px clamp(20px,4vw,36px)}
+.cmp-bar{display:flex;height:58px;border-radius:var(--r);overflow:hidden;border:1px solid var(--b2);position:relative}
+.cmp-vis{width:34%;background:var(--s4);display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:12px;color:var(--t2);border-right:2px dashed var(--a)}
+.cmp-hid{flex:1;background:
+  linear-gradient(90deg,var(--a-dim),rgba(32,227,160,.05)),
+  repeating-linear-gradient(135deg,transparent 0 9px,rgba(32,227,160,.08) 9px 18px);
+  display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:12px;color:var(--a)}
+.cmp-legend{display:flex;flex-wrap:wrap;justify-content:space-between;gap:14px;margin-top:16px;font-size:13.5px}
+.cmp-legend .l1{color:var(--t3)}.cmp-legend .l2{color:var(--a)}
+.cmp-note{margin-top:18px;color:var(--t2);font-size:14.5px;max-width:70ch}
+
+/* ── PIPELINE (svg) ───────────────────────────── */
+.figure{background:var(--s1);border:1px solid var(--b1);border-radius:var(--r-lg);padding:26px clamp(16px,3vw,30px)}
+.figure svg{width:100%;height:auto;display:block}
+.txt{fill:var(--t1);font-family:'DM Sans',sans-serif;font-weight:500}
+.txt-sm{fill:var(--t3);font-family:'DM Mono',monospace}
+.txt-a{fill:var(--a)}
+
+/* ── CARDS ────────────────────────────────────── */
+.cards{display:grid;gap:14px;margin-top:26px}
+.c2{grid-template-columns:1fr 1fr}.c3{grid-template-columns:repeat(3,1fr)}.c4{grid-template-columns:repeat(2,1fr)}
+.card{background:var(--s1);border:1px solid var(--b1);border-radius:var(--r-lg);padding:22px;transition:.18s}
+.card:hover{border-color:var(--b3);background:var(--s2);transform:translateY(-2px)}
+.card .ico{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;
+  background:var(--a-dim);border:1px solid var(--a-bd);margin-bottom:14px;color:var(--a)}
+.card h3{font-size:16.5px;font-weight:600;margin-bottom:7px;letter-spacing:-.01em}
+.card h3 code{font-size:.82em}
+.card p{font-size:14.5px;color:var(--t2)}
+
+/* ── MODES CONCEPT MAP ────────────────────────── */
+.modes{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:14px}
+.mode{background:var(--s1);border:1px solid var(--b1);border-radius:var(--r-lg);padding:22px;position:relative;overflow:hidden}
+.mode::before{content:'';position:absolute;top:0;left:0;right:0;height:3px}
+.mode.z::before{background:var(--t3)}.mode.c::before{background:var(--a)}.mode.t::before{background:var(--ai)}
+.mode .tag{font-family:var(--mono);font-size:11px;letter-spacing:.05em;padding:3px 10px;border-radius:99px;
+  display:inline-block;margin-bottom:12px}
+.mode.z .tag{background:var(--s3);color:var(--t2);border:1px solid var(--b3)}
+.mode.c .tag{background:var(--a-dim);color:var(--a);border:1px solid var(--a-bd)}
+.mode.t .tag{background:var(--ai-dim);color:#b3bcff;border:1px solid var(--ai-bd)}
+.mode h3{font-size:17px;font-weight:600;margin-bottom:5px}
+.mode .sub{font-size:13px;color:var(--t3);margin-bottom:14px}
+.mode ul{list-style:none;display:flex;flex-direction:column;gap:9px}
+.mode li{font-size:13.5px;color:var(--t2);display:flex;gap:9px;line-height:1.45}
+.mode li svg{width:15px;height:15px;flex-shrink:0;margin-top:2px}
+.mode.z li svg{color:var(--t3)}.mode.c li svg{color:var(--a)}.mode.t li svg{color:var(--ai)}
+.legend-row{display:flex;flex-wrap:wrap;gap:20px;margin-top:20px;font-size:13.5px;color:var(--t2)}
+.legend-row span{display:inline-flex;align-items:center;gap:8px}
+.dotk{width:10px;height:10px;border-radius:99px}
+
+/* ── TECH ─────────────────────────────────────── */
+.tech{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:26px}
+.tech .card{padding:18px}
+.tech .card h3{font-size:14.5px;font-family:var(--mono);font-weight:500}
+.tech .card p{font-size:13px}
+
+/* ── CTA BAND + FOOTER ────────────────────────── */
+.band{background:linear-gradient(180deg,var(--s1),var(--bg));border:1px solid var(--b1);
+  border-radius:var(--r-xl);padding:clamp(40px,6vw,68px);text-align:center;position:relative;overflow:hidden}
+.band::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 50% -20%,var(--a-glow),transparent 55%);opacity:.5}
+.band h2{position:relative;margin-bottom:14px}
+.band p{position:relative;color:var(--t2);max-width:56ch;margin:0 auto 26px}
+.band .cta{position:relative;justify-content:center}
+footer{border-top:1px solid var(--b1);margin-top:24px}
+.foot-in{max-width:1080px;margin:0 auto;padding:32px clamp(20px,5vw,52px) 56px;display:flex;
+  flex-wrap:wrap;gap:20px;justify-content:space-between;align-items:center;color:var(--t3);font-size:13px}
+.foot-brand{display:flex;align-items:center;gap:9px;font-family:var(--mono)}
+.foot-brand svg{width:17px;height:27px}
+
+@media (max-width:860px){
+  .hero{grid-template-columns:1fr;gap:34px}
+  .hero::before{top:-120px}
+  .stats{grid-template-columns:1fr 1fr}
+  .c2,.c3,.c4,.tech,.modes{grid-template-columns:1fr}
+  .nav-link{display:none}
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <a class="logo" href="#top" aria-label="crawlDNA">
+    <svg id="dna" viewBox="0 0 28 44" xmlns="http://www.w3.org/2000/svg"></svg>
+    <span id="brand"><span class="cursor"></span></span>
+  </a>
+  <div class="nav-right">
+    <a class="nav-link" href="#reveal">The reveal</a>
+    <a class="nav-link" href="#how">How it works</a>
+    <a class="nav-link" href="#modes">Modes</a>
+    <a class="gh" href="https://github.com/BogdanVasaiu" target="_blank" rel="noopener">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.5v-2c-3.2.7-3.9-1.4-3.9-1.4-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.4-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.4 11.4 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.6.8.5 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/></svg>
+      GitHub
+    </a>
+  </div>
+</nav>
+
+<main id="top">
+
+  <!-- HERO -->
+  <section class="hero">
+    <div>
+      <p class="kicker">reveal engine · verbatim markdown · ai optional</p>
+      <h1>Extract everything a page knows.<br><span class="muted">Even what it hides.</span></h1>
+      <p class="lede">crawlDNA opens every page in a real browser and clicks the tabs, accordions
+        and “load more” buttons that static crawlers never touch — then hands you clean,
+        word-for-word Markdown. Turn on AI and it follows your goal and keeps only what matters.</p>
+      <div class="cta">
+        <span class="term"><span><span class="d">$</span> npx crawldna https://site.dev --no-ai</span>
+          <button id="copy" title="Copy">copy</button></span>
+        <a class="btn btn-primary" href="#how">See how it works →</a>
+      </div>
+    </div>
+    <!-- reveal illustration -->
+    <div class="reveal-art" aria-hidden="true">
+      <div class="ra-bar"><span class="ra-dot"></span><span class="ra-dot"></span><span class="ra-dot"></span></div>
+      <div class="ra-row m"></div><div class="ra-row s"></div>
+      <div class="ra-panel">
+        <div class="ra-tab"><span>Overview</span><span class="on">Hidden ▾</span><span>Specs</span></div>
+        <div class="ra-hidden">
+          <div class="ra-cta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M9 18l6-6-6-6"/></svg> revealed by click</div>
+          <div class="ra-row m"></div><div class="ra-row"></div><div class="ra-row s"></div>
+        </div>
+      </div>
+      <div class="ra-row s"></div>
+    </div>
+  </section>
+
+  <!-- STAT STRIP -->
+  <section style="padding-top:8px">
+    <div class="stats">
+      <div class="stat"><div class="k">Real browser</div><div class="l">every page rendered in Chromium — not just fetched</div></div>
+      <div class="stat"><div class="k">Zero-token engine</div><div class="l">the full reveal engine runs with no model</div></div>
+      <div class="stat"><div class="k">Crawl once · reshape ∞</div><div class="l">extract verbatim, then reshape any time</div></div>
+      <div class="stat"><div class="k">Verbatim output</div><div class="l">nothing summarized, nothing rewritten</div></div>
+    </div>
+  </section>
+
+  <!-- THE REVEAL -->
+  <section id="reveal">
+    <div class="sec-head">
+      <p class="kicker">the difference</p>
+      <h2>Most of a page is hidden behind a click</h2>
+      <p>Tabs, accordions, “load more”, wizards, cookie walls. A static fetch stops at the first
+        paint. crawlDNA drives the page like a human until nothing new appears — then measures
+        what’s still hidden, so completeness is a number, not a hope.</p>
+    </div>
+    <div class="compare">
+      <div class="cmp-bar">
+        <div class="cmp-vis">visible on load</div>
+        <div class="cmp-hid">hidden behind tabs · accordions · “load more” — crawlDNA reveals it</div>
+      </div>
+      <div class="cmp-legend">
+        <span class="l1">◂ where a static crawler stops</span>
+        <span class="l2">what crawlDNA also captures ▸</span>
+      </div>
+      <p class="cmp-note">Every state is captured whole and de-duplicated — the npm tab and the yarn
+        tab both land in the output, byte-identical repeats don’t. When the loop ends, an audit
+        reports how much text, if any, is still out of reach.</p>
+    </div>
+  </section>
+
+  <!-- HOW IT WORKS: pipeline -->
+  <section id="how">
+    <div class="sec-head">
+      <p class="kicker">pipeline</p>
+      <h2>One page, end to end</h2>
+      <p>The same deterministic path every time. AI, when on, only decides <em>which</em> controls
+        to click and <em>what</em> to keep — the data is always read straight from the DOM.</p>
+    </div>
+    <div class="figure">
+      <svg viewBox="0 0 980 104" role="img" aria-label="Pipeline: URL to real browser to reveal to extract to dedup to Markdown">
+        <defs>
+          <marker id="arw" markerWidth="9" markerHeight="9" refX="6" refY="4.5" orient="auto">
+            <path d="M0 0L8 4.5L0 9" fill="none" stroke="#35353d" stroke-width="1.6"/>
+          </marker>
+        </defs>
+        <!-- connectors (box centre, y=46) -->
+        <g stroke="#28282f" stroke-width="2" marker-end="url(#arw)" fill="none">
+          <line x1="126" y1="46" x2="156" y2="46"/>
+          <line x1="308" y1="46" x2="338" y2="46"/>
+          <line x1="530" y1="46" x2="560" y2="46"/>
+          <line x1="694" y1="46" x2="724" y2="46"/>
+          <line x1="828" y1="46" x2="858" y2="46"/>
+        </g>
+        <!-- URL -->
+        <rect x="8" y="24" width="118" height="44" rx="11" fill="#141417" stroke="#28282f"/>
+        <text x="67" y="51" text-anchor="middle" class="txt-sm" font-size="12.5">URL + task</text>
+        <!-- Real browser -->
+        <rect x="160" y="24" width="148" height="44" rx="11" fill="#141417" stroke="#28282f"/>
+        <text x="234" y="51" text-anchor="middle" class="txt" font-size="14">Real browser</text>
+        <text x="234" y="88" text-anchor="middle" class="txt-sm" font-size="9.5">render + settle</text>
+        <!-- Reveal (the differentiator) -->
+        <rect x="342" y="20" width="188" height="52" rx="12" fill="rgba(32,227,160,.08)" stroke="#20e3a0" stroke-width="1.5"/>
+        <text x="436" y="50" text-anchor="middle" class="txt-a" font-size="15" font-weight="600">Reveal ✦</text>
+        <text x="436" y="88" text-anchor="middle" class="txt-a" font-size="9.5">clicks hidden controls</text>
+        <!-- Extract -->
+        <rect x="564" y="24" width="130" height="44" rx="11" fill="#141417" stroke="#28282f"/>
+        <text x="629" y="51" text-anchor="middle" class="txt" font-size="14">Extract</text>
+        <text x="629" y="88" text-anchor="middle" class="txt-sm" font-size="9.5">html → markdown</text>
+        <!-- Dedup -->
+        <rect x="728" y="24" width="100" height="44" rx="11" fill="#141417" stroke="#28282f"/>
+        <text x="778" y="51" text-anchor="middle" class="txt" font-size="14">Dedup</text>
+        <!-- Markdown -->
+        <rect x="862" y="24" width="118" height="44" rx="11" fill="#141417" stroke="#28282f"/>
+        <text x="921" y="51" text-anchor="middle" class="txt-a" font-size="14" font-weight="600">Markdown</text>
+        <text x="921" y="88" text-anchor="middle" class="txt-sm" font-size="9.5">+ resume journal</text>
+      </svg>
+    </div>
+  </section>
+
+  <!-- TWO PHASES -->
+  <section id="phases">
+    <div class="sec-head">
+      <p class="kicker">architecture</p>
+      <h2>Crawl once. Reshape as often as you like.</h2>
+    </div>
+    <div class="figure" style="margin-bottom:14px">
+      <svg viewBox="0 0 980 118" role="img" aria-label="Phase 1 crawl writes files to disk; phase 2 reshape reads them">
+        <defs><marker id="arw2" markerWidth="9" markerHeight="9" refX="6" refY="4.5" orient="auto"><path d="M0 0L8 4.5L0 9" fill="none" stroke="#35353d" stroke-width="1.6"/></marker></defs>
+        <rect x="10" y="24" width="360" height="70" rx="12" fill="rgba(32,227,160,.06)" stroke="#28282f"/>
+        <text x="30" y="50" class="txt-a" font-size="12" font-family="DM Mono">PHASE 1 — CRAWL</text>
+        <text x="30" y="74" class="txt" font-size="14">render → reveal → extract → keep/drop → save</text>
+        <!-- disk -->
+        <g>
+          <line x1="370" y1="59" x2="452" y2="59" stroke="#28282f" stroke-width="2" marker-end="url(#arw2)"/>
+          <rect x="452" y="34" width="120" height="50" rx="11" fill="#141417" stroke="#35353d"/>
+          <text x="512" y="58" text-anchor="middle" class="txt" font-size="13">saved files</text>
+          <text x="512" y="74" text-anchor="middle" class="txt-sm" font-size="10.5">.md · manifest</text>
+          <line x1="572" y1="59" x2="654" y2="59" stroke="#28282f" stroke-width="2" marker-end="url(#arw2)"/>
+        </g>
+        <rect x="654" y="24" width="316" height="70" rx="12" fill="rgba(129,140,248,.06)" stroke="#28282f"/>
+        <text x="674" y="50" fill="#b3bcff" font-size="12" font-family="DM Mono">PHASE 2 — RESHAPE  ∞</text>
+        <text x="674" y="74" class="txt" font-size="14">chat over the files: tables · subsets · formats</text>
+      </svg>
+    </div>
+    <div class="cards c2">
+      <div class="card">
+        <h3>Crawl</h3>
+        <p>Visits the site page by page, opens the hidden content, extracts verbatim Markdown and
+          saves each page the moment it’s captured. A crash loses nothing — <code>resume</code>
+          picks up where it stopped.</p>
+      </div>
+      <div class="card">
+        <h3>Reshape</h3>
+        <p>A chat over the saved files — tables, summaries, filtered subsets, other formats. Originals
+          stay untouched, and every value produced (numbers, URLs, code) is checked against the
+          sources; what doesn’t match is flagged, not served.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- MODES: concept map -->
+  <section id="modes">
+    <div class="sec-head">
+      <p class="kicker">one dial</p>
+      <h2>How much AI?</h2>
+      <p>Behaviour is never inferred from your task text — it’s an explicit choice. Three settings,
+        one question: how much should the model decide?</p>
+    </div>
+    <div class="modes">
+      <div class="mode z">
+        <span class="tag">--no-ai</span>
+        <h3>None</h3>
+        <p class="sub">Zero calls to any model</p>
+        <ul>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg> Reveal engine still clicks everything</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg> Keeps every page, whole</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg> Guaranteed zero tokens</li>
+        </ul>
+      </div>
+      <div class="mode c">
+        <span class="tag">--mode complete</span>
+        <h3>Scope</h3>
+        <p class="sub">AI on · take the whole site</p>
+        <ul>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg> Every reachable page, pages whole</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg> AI arbitrates only ambiguous clicks</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg> Measured payload overrides a wrong “no”</li>
+        </ul>
+      </div>
+      <div class="mode t">
+        <span class="tag">--mode targeted</span>
+        <h3>Goal</h3>
+        <p class="sub">AI on · only what the task asks</p>
+        <ul>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg> Follows links that serve the task</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg> Keeps relevant pages and sections</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg> Optional embeddings rank by meaning</li>
+        </ul>
+      </div>
+    </div>
+    <div class="legend-row">
+      <span><span class="dotk" style="background:var(--t3)"></span> deterministic · zero tokens</span>
+      <span><span class="dotk" style="background:var(--a)"></span> AI decides scope</span>
+      <span><span class="dotk" style="background:var(--ai)"></span> AI follows a goal</span>
+    </div>
+  </section>
+
+  <!-- GUARANTEES -->
+  <section id="guarantees">
+    <div class="sec-head">
+      <p class="kicker">non-negotiable</p>
+      <h2>The same promises, in every mode</h2>
+    </div>
+    <div class="cards c4">
+      <div class="card">
+        <div class="ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+        <h3>Verbatim, always</h3>
+        <p>The extracted content is the page’s own words. No model summarizes or rewrites it — in any mode.</p>
+      </div>
+      <div class="card">
+        <div class="ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg></div>
+        <h3>Completeness measured</h3>
+        <p>Every page ends with an audit of how much text stayed hidden. If something’s missing, you know — you don’t find out later.</p>
+      </div>
+      <div class="card">
+        <div class="ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
+        <h3>Anti-bot declared</h3>
+        <p>A block (CAPTCHA, interstitial) is recognized, retried once on the site’s terms, then skipped and reported. Never bypassed, never faked as content.</p>
+      </div>
+      <div class="card">
+        <div class="ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20z"/></svg></div>
+        <h3>No per-site rules</h3>
+        <p>No special config for individual sites — only universal signals: structure, geometry, the measured mass of content. It works the same everywhere.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- TECH -->
+  <section id="tech">
+    <div class="sec-head">
+      <p class="kicker">under the hood</p>
+      <h2>Small, sharp, no build step</h2>
+    </div>
+    <div class="tech">
+      <div class="card"><h3>Node.js — pure ESM</h3><p>Zero build, minimal deps. CLI, local Web UI and library share one API.</p></div>
+      <div class="card"><h3>Playwright / Chromium</h3><p>A real browser, with a pooled set of reused contexts so assets aren’t re-paid per page.</p></div>
+      <div class="card"><h3>Turndown + heuristics</h3><p>Deterministic HTML→Markdown. Heuristics beat neural models on main content (SIGIR 2023).</p></div>
+      <div class="card"><h3>Ollama or OpenAI-compatible</h3><p>One provider layer for chat and embeddings — local model or cloud, same interface.</p></div>
+      <div class="card"><h3>64-bit SimHash</h3><p>Content fingerprints collapse mirrors and variants — only alongside URL-shape proof, never on similarity alone.</p></div>
+      <div class="card"><h3>JSONL journal + resume</h3><p>Every page hits disk the moment it’s captured. Crash or Ctrl-C: <code>resume</code> finishes the run.</p></div>
+    </div>
+  </section>
+
+  <!-- CTA BAND -->
+  <section>
+    <div class="band">
+      <h2>Point it at a site. Get clean Markdown.</h2>
+      <p>Open-source, CLI- and library-first, with an optional local Web UI. Start with zero tokens.</p>
+      <div class="cta">
+        <span class="term"><span><span class="d">$</span> npx crawldna https://site.dev --no-ai</span>
+          <button id="copy2" title="Copy">copy</button></span>
+        <a class="btn btn-primary" href="https://github.com/BogdanVasaiu" target="_blank" rel="noopener">View on GitHub →</a>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="foot-in">
+    <div class="foot-brand"><svg id="dna-foot" viewBox="0 0 28 44" xmlns="http://www.w3.org/2000/svg"></svg>
+      crawl<span style="color:var(--a)">DNA</span></div>
+    <div>crawldna.com · <code>--no-ai</code> guarantees zero tokens, not more speed · completeness is measured, not promised</div>
+  </div>
+</footer>
+
+<script>
+function makeDna(svgId, G){
+  const ns='http://www.w3.org/2000/svg',svg=document.getElementById(svgId); if(!svg) return;
+  const W=28,H=44,CX=W/2,CY=H/2,PAIRS=7,RADIUS=7,HEIGHT=38,TWIST=Math.PI*2,SPIN=0.016,PREC=0.009,TILT=0.30; let t=0;
+  const dep=z=>{const k=(z+1)/2;return{op:0.28+k*0.72,sw:0.9+k*1.6,r:1.2+k*1.5}};
+  const mL=(x1,y1,x2,y2,c,sw,op)=>{const e=document.createElementNS(ns,'line');e.setAttribute('x1',x1.toFixed(2));e.setAttribute('y1',y1.toFixed(2));e.setAttribute('x2',x2.toFixed(2));e.setAttribute('y2',y2.toFixed(2));e.setAttribute('stroke',c);e.setAttribute('stroke-width',sw.toFixed(2));e.setAttribute('stroke-linecap','round');e.setAttribute('opacity',op.toFixed(2));return e};
+  const mC=(x,y,r,f,op)=>{const e=document.createElementNS(ns,'circle');e.setAttribute('cx',x.toFixed(2));e.setAttribute('cy',y.toFixed(2));e.setAttribute('r',r.toFixed(2));e.setAttribute('fill',f);e.setAttribute('opacity',op.toFixed(2));return e};
+  function frame(){t++;const spin=t*SPIN,prec=t*PREC,tX=Math.sin(prec)*TILT,tZ=Math.cos(prec)*TILT,els=[],pts=[];
+    for(let i=0;i<=PAIRS;i++){const fr=i/PAIRS,t0=fr-0.5,a=fr*TWIST+spin,axX=CX+t0*HEIGHT*Math.sin(tX),axY=CY+t0*HEIGHT*Math.cos(tX)*Math.cos(tZ),axZ=t0*HEIGHT*Math.sin(tZ);
+      pts.push({x1:axX+Math.cos(a)*RADIUS,y1:axY,x2:axX+Math.cos(a+Math.PI)*RADIUS,y2:axY,z1:Math.sin(a)+axZ/HEIGHT,z2:Math.sin(a+Math.PI)+axZ/HEIGHT})}
+    for(let i=0;i<pts.length;i++){const p=pts[i],rz=(p.z1+p.z2)/2,rd=dep(rz);els.push({z:rz,el:mL(p.x1,p.y1,p.x2,p.y2,'#8b949e',rd.sw*0.55,rd.op*0.45)});
+      if(i<pts.length-1){const n=pts[i+1],s1=(p.z1+n.z1)/2,d1=dep(s1);els.push({z:s1,el:mL(p.x1,p.y1,n.x1,n.y1,G,d1.sw,d1.op)});const s2=(p.z2+n.z2)/2,d2=dep(s2);els.push({z:s2,el:mL(p.x2,p.y2,n.x2,n.y2,'#f778ba',d2.sw,d2.op)})}
+      const d1=dep(p.z1);els.push({z:p.z1,el:mC(p.x1,p.y1,d1.r,G,d1.op)});const d2=dep(p.z2);els.push({z:p.z2,el:mC(p.x2,p.y2,d2.r,'#f778ba',d2.op)})}
+    els.sort((a,b)=>a.z-b.z);while(svg.firstChild)svg.removeChild(svg.firstChild);const f=document.createDocumentFragment();els.forEach(e=>f.appendChild(e.el));svg.appendChild(f);requestAnimationFrame(frame)}
+  requestAnimationFrame(frame);
+}
+/* typewriter: "crawl" then a PERMANENTLY green, uppercase "DNA" */
+function typewriter(id){
+  const FULL='crawlDNA',SPLIT=5,brand=document.getElementById(id);if(!brand)return;
+  const rnd=()=>65+Math.random()*100;
+  function render(n){const a=FULL.slice(0,Math.min(n,SPLIT)),b=FULL.slice(SPLIT,n);let h='';
+    if(a)h+='<span class="crawl">'+a+'</span>';if(b)h+='<span class="dna">'+b+'</span>';
+    h+='<span class="cursor"></span>';brand.innerHTML=h}
+  (function type(i){render(i);if(i<FULL.length)setTimeout(()=>type(i+1),rnd())})(0);
+}
+makeDna('dna','#20e3a0'); makeDna('dna-foot','#20e3a0');
+setTimeout(()=>typewriter('brand'),350);
+function bindCopy(id){const el=document.getElementById(id);if(!el)return;el.addEventListener('click',function(){
+  navigator.clipboard.writeText('npx crawldna https://site.dev --no-ai').then(()=>{const o=this.textContent;this.textContent='copied ✓';setTimeout(()=>this.textContent=o,1400)})})}
+bindCopy('copy'); bindCopy('copy2');
+</script>
+</body>
+</html>
