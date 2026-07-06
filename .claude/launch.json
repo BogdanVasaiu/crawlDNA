@@ -7,6 +7,12 @@
       "runtimeArgs": ["bin/cli.mjs", "serve", "--port", "4173"],
       "port": 4173,
       "autoPort": true
+    },
+    {
+      "name": "docs-preview",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["C:\\Users\\bogda\\AppData\\Local\\Temp\\claude\\C--Users-bogda-Documents-GitHub-crawler\\e40be482-e33a-4f0c-ab83-8e1c1dfcae5a\\scratchpad\\serve-docs.mjs"],
+      "port": 4174
     }
   ]
 }
