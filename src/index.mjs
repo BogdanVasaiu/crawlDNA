@@ -12,7 +12,9 @@ import { createHash } from 'node:crypto';
 import { runDocsProfile } from './profiles/docs.mjs';
 import { crawlPageWithEngine } from './engine/crawl-page.mjs';
 import { assembleScan, assemblePerDocument, assembleStates } from './lib/layout.mjs';
-import { saveRun, scanIdFor, initRun, appendJournal, loadRunForResume, cacheRoot } from './lib/runs.mjs';
+import { saveRun, scanIdFor, initRun, appendJournal, loadRunForResume, findBaselineRun, cacheRoot } from './lib/runs.mjs';
+import { sitemapLastmodMap } from './profiles/docs/sitemap.mjs';
+import { planIncremental } from './lib/incremental.mjs';
 import { retainBrowser, releaseBrowser, configureContextPool } from './lib/browser.mjs';
 import { normalizeUrl, inScope, pathOf, originOf, hostOf, siblingKey } from './lib/url.mjs';
 import { modeBehavior, MODES } from './lib/task.mjs';
@@ -114,6 +116,13 @@ export const DEFAULT_OPTIONS = {
   // same path on an unrelated product subdomain) start at 10 and sit mostly ≥23. Without
   // this gate, 57% of that run's pages (and ~35 min of its hour) were mirror re-crawls.
   // 0 = off. Cross-PATH near-dups are never touched by this tier (see nearDupHamming).
+  incremental: false, // #6 — INCREMENTAL RE-CRAWL (opt-in). On a re-crawl of the same
+  // target(s), REUSE the pages whose sitemap <lastmod> is unchanged since the last
+  // incremental run (skipping render + reveal) and re-crawl only what changed. CONSERVATIVE
+  // by construction: a page is reused ONLY when its stored and current lastmod are both
+  // present and equal — any uncertainty re-crawls, so a real change is never skipped (rule
+  // #1). Implies save, and RETAINS this run's journal so it becomes the next run's baseline.
+  // No sitemap, or no prior incremental baseline → a normal full crawl that establishes one.
   onEvent: undefined,
 };
 
@@ -190,6 +199,54 @@ function createEventStream() {
  * @param {string|string[]|{url,task?}|Array<{url,task?}>} targets
  * @param {Partial<typeof DEFAULT_OPTIONS>} [options]
  */
+/**
+ * Replay journal records into a scan: restored pages join scan.pages and the dedup
+ * indexes (exactly as addPage would build them), so a later crawl recognises their
+ * mirrors/near-dups. Returns { visited, seeds } for the frontier — restored URLs are
+ * pre-visited (never re-rendered) and their links re-seed discovery.
+ *
+ * Shared by resume (#13) and incremental (#6): the SAME restore, just fed all records
+ * for a resume and only the still-fresh records for an incremental crawl.
+ */
+function restoreRecords(scan, records, opts) {
+  const visited = new Set();
+  const seeds = new Set();
+  for (const rec of records) {
+    const page = rec && rec.page;
+    for (const l of (rec && rec.links) || []) seeds.add(l);
+    if (!page || !page.url || typeof page.markdown !== 'string') continue;
+    const sig = pageSignature(page.markdown);
+    const hash = createHash('sha1').update(sig).digest('hex');
+    visited.add(normalizeUrl(page.url) || page.url);
+    if (scan._hashes.has(hash)) continue; // defensive: a journal shouldn't hold dupes
+    scan._hashes.add(hash);
+    // Rebuild the same dedup indexes addPage maintains, so the crawl recognises
+    // mirrors/near-dups of RESTORED pages too.
+    if (opts.nearDupHamming > 0 || opts.mirrorHamming > 0) {
+      const sh = simhash(sig);
+      if (opts.nearDupHamming > 0) {
+        if (!scan._simhashes) scan._simhashes = [];
+        scan._simhashes.push(sh);
+      }
+      if (opts.mirrorHamming > 0) {
+        const key = siblingKey(page.url);
+        const kin = scan._siblings.get(key) || [];
+        kin.push({ sh, url: page.url });
+        scan._siblings.set(key, kin);
+      }
+    }
+    scan.pages.push(page);
+    const s = (page.meta && page.meta.strategy) || 'agent';
+    scan.stats.strategyCounts[s] = (scan.stats.strategyCounts[s] || 0) + 1;
+    const residual = (page.meta && page.meta.revealResidualChars) || 0;
+    if (residual > 0) {
+      scan.stats.revealResidual.pages += 1;
+      scan.stats.revealResidual.chars += residual;
+    }
+  }
+  return { visited, seeds };
+}
+
 export function crawlDocs(targets, options = {}) {
   const opts = { ...DEFAULT_OPTIONS, ...options };
   // #20 — `mode` is an explicit contract, so misuse fails FAST and LOUD (a silent
@@ -258,7 +315,7 @@ export function crawlDocs(targets, options = {}) {
   // Persistence is opt-in (see DEFAULT_OPTIONS.save): write a run to the cache only
   // when the caller asked — explicitly via `save`, or implicitly by naming a place
   // to put it (`cacheDir` / CRAWLDNA_CACHE_DIR). Otherwise the crawl stays in memory.
-  const willSave = opts.save === true || !!opts.cacheDir || !!process.env.CRAWLDNA_CACHE_DIR || !!resume;
+  const willSave = opts.save === true || !!opts.cacheDir || !!process.env.CRAWLDNA_CACHE_DIR || !!resume || opts.incremental;
 
   // Incremental journal (#13): when saving is on, every kept page is appended to
   // <run>/<scanId>/pages.jsonl AS IT IS CAPTURED, so a crash (or Stop) at hour 4 of
@@ -317,7 +374,7 @@ export function crawlDocs(targets, options = {}) {
     pages: [],
     files: [],
     documents: [], // per-page format, populated only when opts.perDocument is on (#10)
-    stats: { pages: 0, durationMs: 0, strategyCounts: emptyCounts(), tokens: emptyTokens(), deduped: { exact: 0, mirror: 0, near: 0 }, revealResidual: { pages: 0, chars: 0 } },
+    stats: { pages: 0, durationMs: 0, strategyCounts: emptyCounts(), tokens: emptyTokens(), deduped: { exact: 0, mirror: 0, near: 0 }, revealResidual: { pages: 0, chars: 0 }, incremental: null },
     warnings: [],
     _hashes: new Set(), // de-dupe pages with identical content, PER scan
     _siblings: new Map(), // siblingKey → [{sh, url}] of KEPT pages, for the mirror tier
@@ -333,41 +390,7 @@ export function crawlDocs(targets, options = {}) {
     for (const scan of scans) {
       const records = resume.journals[scan.scanId];
       if (!Array.isArray(records) || !records.length) continue;
-      const visited = new Set();
-      const seeds = new Set();
-      for (const rec of records) {
-        const page = rec && rec.page;
-        for (const l of (rec && rec.links) || []) seeds.add(l);
-        if (!page || !page.url || typeof page.markdown !== 'string') continue;
-        const sig = pageSignature(page.markdown);
-        const hash = createHash('sha1').update(sig).digest('hex');
-        visited.add(normalizeUrl(page.url) || page.url);
-        if (scan._hashes.has(hash)) continue; // defensive: a journal shouldn't hold dupes
-        scan._hashes.add(hash);
-        // Rebuild the same dedup indexes addPage maintains, so the resumed crawl
-        // recognises mirrors/near-dups of RESTORED pages too.
-        if (opts.nearDupHamming > 0 || opts.mirrorHamming > 0) {
-          const sh = simhash(sig);
-          if (opts.nearDupHamming > 0) {
-            if (!scan._simhashes) scan._simhashes = [];
-            scan._simhashes.push(sh);
-          }
-          if (opts.mirrorHamming > 0) {
-            const key = siblingKey(page.url);
-            const kin = scan._siblings.get(key) || [];
-            kin.push({ sh, url: page.url });
-            scan._siblings.set(key, kin);
-          }
-        }
-        scan.pages.push(page);
-        const s = (page.meta && page.meta.strategy) || 'agent';
-        scan.stats.strategyCounts[s] = (scan.stats.strategyCounts[s] || 0) + 1;
-        const residual = (page.meta && page.meta.revealResidualChars) || 0;
-        if (residual > 0) {
-          scan.stats.revealResidual.pages += 1;
-          scan.stats.revealResidual.chars += residual;
-        }
-      }
+      const { visited, seeds } = restoreRecords(scan, records, opts);
       scan._resume = { visited, seeds: [...seeds], restored: scan.pages.length };
     }
   }
@@ -505,6 +528,12 @@ export function crawlDocs(targets, options = {}) {
         scan.stats.revealResidual.pages += 1;
         scan.stats.revealResidual.chars += residual;
       }
+      // #6 — stamp the page's sitemap <lastmod> (present only on an incremental crawl)
+      // so a future incremental run can tell whether it changed. Purely additive metadata.
+      if (scan._lastmodMap) {
+        const lm = scan._lastmodMap.get(normalizeUrl(page.url) || page.url);
+        if (lm) (page.meta || (page.meta = {})).lastmod = lm;
+      }
       // Incremental persistence (#13): the kept page hits the disk NOW, verbatim,
       // append-only — a crash from here on cannot lose it. No-op when saving is off.
       journal.append(scan.scanId, { page, links: extra.links || [] });
@@ -600,11 +629,50 @@ export function crawlDocs(targets, options = {}) {
         }
       }
 
+      // #6 — incremental: find the prior incremental run for these targets so its
+      // still-fresh pages can be reused instead of re-crawled. Missing/failed lookup
+      // is not an error — the crawl just runs in full and establishes a baseline.
+      let baselineJournals = null;
+      if (opts.incremental && !resume) {
+        try {
+          const base = await findBaselineRun(list, opts);
+          if (base) {
+            baselineJournals = base.journals;
+            emit({ type: 'incremental', phase: 'baseline', baselineId: base.id });
+          } else {
+            emit({ type: 'incremental', phase: 'no-baseline', message: 'No prior incremental run to reuse — crawling in full to establish a baseline.' });
+          }
+        } catch (err) {
+          emit({ type: 'warn', reason: 'incremental', message: 'Incremental baseline lookup failed: ' + (err && err.message) + '. Crawling in full.' });
+        }
+      }
+
       for (const scan of scans) {
         if (stopped) break;
         ctx.beginScan(scan);
         emit({ type: 'site', url: scan.url, task: scan.task, title: scan.title });
-        if (scan._resume && scan._resume.restored) {
+        // #6 — decide which baseline pages are still fresh (sitemap lastmod unchanged),
+        // reuse those (skip render+reveal) and re-journal them so THIS run can be the
+        // next baseline; everything else falls through to a normal crawl below.
+        if (opts.incremental && !resume) {
+          let currentLastmod = new Map();
+          try {
+            currentLastmod = await sitemapLastmodMap(scan.url, { shouldStop: () => stopped });
+          } catch {
+            /* no sitemap / fetch failed → nothing reused, full crawl (safe) */
+          }
+          scan._lastmodMap = currentLastmod;
+          const records = (baselineJournals && baselineJournals[scan.scanId]) || [];
+          const { reuse } = planIncremental(records, currentLastmod);
+          if (reuse.length) {
+            const { visited, seeds } = restoreRecords(scan, reuse, opts);
+            scan._resume = { visited, seeds: [...seeds], restored: scan.pages.length };
+            for (const rec of reuse) journal.append(scan.scanId, { page: rec.page, links: rec.links || [] });
+          }
+          scan.stats.incremental = { reused: scan.pages.length, baseline: records.length, sitemapLastmods: currentLastmod.size };
+          emit({ type: 'incremental', phase: 'plan', url: scan.url, reused: scan.pages.length, baseline: records.length });
+        }
+        if (resume && scan._resume && scan._resume.restored) {
           emit({ type: 'resume', url: scan.url, restored: scan._resume.restored });
         }
         const target = { url: scan.url, task: scan.task };

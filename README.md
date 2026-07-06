@@ -373,6 +373,24 @@ This is **pure repackaging** — the content is identical to the consolidated fi
 filtered or transformed. In the library, `result.scans[].documents` carries the same
 records in memory even when saving is off.
 
+### Incremental re-crawl (opt-in)
+
+Keeping a site fresh over time shouldn't mean re-rendering thousands of unchanged
+pages. Pass `incremental: true` (CLI `--incremental`) and a re-crawl of the same
+target **reuses** every page whose sitemap `<lastmod>` is unchanged since the last
+incremental run — skipping render + reveal for it — and re-crawls only what changed.
+
+- **Conservative by construction**: a page is reused **only** when its stored and
+  current `<lastmod>` are both present and equal. Any uncertainty (no sitemap, a blank
+  or missing `lastmod`, a URL not in the current sitemap) re-crawls — so a real change
+  is never skipped. Unchanged pages come out **byte-identical**.
+- The first `--incremental` run is a normal full crawl that **establishes the
+  baseline** (it stamps each page's `lastmod` and keeps its journal). Subsequent
+  `--incremental` runs of the same target reuse from it.
+- Implies saving. Sites without a `<lastmod>` sitemap simply crawl in full (no gain,
+  no risk). This first slice uses sitemap `lastmod`; HTTP `ETag`/`304` and a
+  content-hash net are planned next (see `TODO.md` #6).
+
 ## Reshape (Phase 2)
 
 The crawl gives you a faithful extraction; **reshape** turns it into whatever you

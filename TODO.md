@@ -99,7 +99,7 @@ la modifica e confrontare numero di pagine tenute, byte totali, e i blocchi rive
 | 3 | Trigger "documentazione" universale (multilingua) | consumi + precisione | Basso-Medio | ✅ fatto (2026-07-01) |
 | 4 | Prompt caching del prefisso istruzioni (API remote) | consumi | Basso | ✅ fatto (2026-07-02) |
 | 5 | Riuso contesto browser per worker (cache asset) | consumi (tempo+banda) | Basso-Medio | ✅ fatto (2026-07-01, verificato con browser reale) |
-| 6 | Crawl incrementale (ETag / Last-Modified / lastmod) | consumi (enorme per refdna) | Medio | ☐ da fare |
+| 6 | Crawl incrementale (ETag / Last-Modified / lastmod) | consumi (enorme per refdna) | Medio | 🟡 Fetta 1 (lastmod-skip) fatta 2026-07-06; 304 + hash-net da fare |
 | 7 | Dedup near-duplicate con SimHash | precisione output + consumi | Medio | ✅ fatto (2026-07-01 opt-in; 2026-07-02 tier mirror/variante DEFAULT-ON + stop espansione dai duplicati) |
 | 8 | Estrazione stile Trafilatura (pruning per densità link) | precisione | Medio | ✅ fatto (2026-07-01) |
 | 9 | Rinforzo reveal: accessibility-tree / Set-of-Marks | precisione (casi difficili) | Alto | 🟡 misura veritiera fatta (`b08d59a`); a11y/vision de-prioritizzato (residuo reale ~5%) |
@@ -414,7 +414,31 @@ crawl in sola lettura è accettabile; valutare reset se un sito si comporta male
 ---
 
 ## #6 — Crawl incrementale (ETag / Last-Modified / sitemap lastmod)
-**Effetto:** consumi (enorme per refdna) · **Sforzo:** Medio · **Stato:** ☐
+**Effetto:** consumi (enorme per refdna) · **Sforzo:** Medio · **Stato:** 🟡 Fetta 1
+(sitemap-lastmod skip) FATTA (2026-07-06); ETag/304 + hash-net = ancora da fare
+
+> **Fetta 1 — lastmod-skip (FATTA, opt-in, conservativa).** `incremental: true` (CLI
+> `--incremental`) riusa le pagine il cui `<lastmod>` in sitemap è invariato dall'ultima
+> run incrementale (salta render+reveal) e ri-crawla solo ciò che è cambiato. Sicura per
+> costruzione (regola #1): si riusa SOLO con prova positiva — lastmod salvato E corrente
+> entrambi presenti e uguali; ogni incertezza ri-crawla. La prima run incrementale è un
+> crawl pieno che stampa il `lastmod` per pagina e RITIENE il journal come baseline; le
+> successive riusano da lì. Riusa il replay del resume (#13) per il restore, filtrato ai
+> soli record freschi. File: `src/lib/incremental.mjs` (planner puro), `src/profiles/docs/
+> sitemap.mjs` (`collectSitemapEntries`/`sitemapLastmodMap` — cattura il lastmod, prima
+> scartato), `src/lib/runs.mjs` (`findBaselineRun`/`targetsMatch` + journal ritenuto se
+> `options.incremental`), `src/index.mjs` (baseline load + gate per-scan + stamp lastmod
+> in addPage + evento `incremental`), CLI `--incremental`. Test: `test/incremental.test.mjs`
+> (planner "mai skip nel dubbio", parse lastmod, target-match) + `test/incremental-crawl.
+> test.mjs` (E2E offline, sitemap mutabile: 1ª full+baseline → 2ª riusa 3/3 identiche → 3ª
+> con 1 pagina cambiata riusa 2/3 e ri-crawla la cambiata). 246 test verdi.
+>
+> **Cosa resta (Fette 2–3).** (2) **HTTP 304**: pre-check in HTTP puro (`fetcher.mjs`)
+> con `If-None-Match`/`If-Modified-Since` PRIMA di aprire il browser → 304 salta
+> render+reveal anche senza sitemap (attenzione SPA: fidarsi del 304 solo dove il
+> contenuto È il documento scaricato). (3) **hash-net**: confronto sha1 dopo render come
+> rete quando il server non ha validator (conferma, non risparmia il render). Persistere
+> `etag`/`lastModified` nel record accanto a `lastmod` (già c'è il gancio in `meta`).
 
 **Problema oggi.** Ogni crawl riparte da zero. refdna dovrà tenere i doc **freschi** nel
 tempo: ri-renderizzare migliaia di pagine immutate è spreco puro.

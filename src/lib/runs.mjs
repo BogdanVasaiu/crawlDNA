@@ -19,7 +19,7 @@
 import { mkdir, writeFile, appendFile, readFile, readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { writeBundle } from './output.mjs';
-import { slug, hostOf } from './url.mjs';
+import { slug, hostOf, normalizeUrl } from './url.mjs';
 
 const ID_RE = /^[A-Za-z0-9_-]+$/;
 
@@ -282,6 +282,40 @@ export async function loadRunForResume(id, opts = {}) {
   return { id, dir, createdAt: summary.createdAt, status, targets, options, journals };
 }
 
+/** True when two target lists cover the SAME set of (normalized) URLs. */
+export function targetsMatch(a, b) {
+  const norm = (list) => new Set((list || []).map((t) => normalizeUrl(t && t.url) || (t && t.url)).filter(Boolean));
+  const sa = norm(a);
+  const sb = norm(b);
+  if (sa.size === 0 || sa.size !== sb.size) return false;
+  for (const x of sa) if (!sb.has(x)) return false;
+  return true;
+}
+
+/**
+ * #6 — find the most recent finished INCREMENTAL run for the same target(s) whose
+ * journal is still on disk, to reuse as the freshness baseline. Returns
+ * { id, journals } or null (no baseline yet → the caller does a full crawl).
+ */
+export async function findBaselineRun(targets, opts = {}) {
+  for (const r of await listRuns(opts)) {
+    // listRuns is newest-first
+    if (r.status !== 'done') continue;
+    let loaded;
+    try {
+      loaded = await loadRunForResume(r.id, opts);
+    } catch {
+      continue;
+    }
+    if (!loaded.options || !loaded.options.incremental) continue;
+    if (!targetsMatch(loaded.targets, targets)) continue;
+    const hasJournal = Object.values(loaded.journals || {}).some((j) => Array.isArray(j) && j.length);
+    if (!hasJournal) continue;
+    return { id: r.id, journals: loaded.journals };
+  }
+  return null;
+}
+
 /**
  * Persist a finished run to the cache.
  * @param {object} a
@@ -332,7 +366,10 @@ export async function saveRun({
 
   // A clean 'done' save supersedes the incremental journal (the same pages now live
   // in the consolidated files); a 'stopped' run keeps its journal so resume works.
-  if (status === 'done') {
+  // #6 — an incremental run ALSO keeps its journal: the next incremental crawl reads
+  // it as the baseline to decide which pages are still fresh (per-page content + its
+  // stored lastmod live only in the journal, not in the consolidated .md).
+  if (status === 'done' && !(options && options.incremental)) {
     for (const scan of scans) {
       await rm(path.join(dir, String(scan.scanId), 'pages.jsonl'), { force: true }).catch(() => {});
     }

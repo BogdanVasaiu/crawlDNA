@@ -6,7 +6,7 @@
 
 import { fetchText } from '../../lib/fetcher.mjs';
 import { XMLParser } from 'fast-xml-parser';
-import { originOf } from '../../lib/url.mjs';
+import { originOf, normalizeUrl } from '../../lib/url.mjs';
 
 function toArray(x) {
   if (x == null) return [];
@@ -14,14 +14,30 @@ function toArray(x) {
 }
 
 /**
- * Collect all page URLs reachable from a site's sitemaps.
+ * Pull { url, lastmod } from a parsed <urlset> (fast-xml-parser output). Pure — no
+ * network — so the #6 lastmod extraction is unit-testable. `lastmod` is '' when the
+ * entry omits it.
+ * @param {object} xml parsed sitemap XML
+ * @returns {Array<{url:string,lastmod:string}>}
+ */
+export function sitemapEntriesFromXml(xml) {
+  const out = [];
+  for (const u of toArray(xml && xml.urlset && xml.urlset.url)) {
+    if (u && u.loc) out.push({ url: String(u.loc).trim(), lastmod: u.lastmod != null ? String(u.lastmod).trim() : '' });
+  }
+  return out;
+}
+
+/**
+ * Collect { url, lastmod } for every page reachable from a site's sitemaps.
+ * Follows sitemap indexes recursively; the first lastmod seen for a URL wins.
  * @param {string} baseUrl
  * @param {object} [opts]
  * @param {() => boolean} [opts.shouldStop]
  * @param {number} [opts.maxDepth] sitemap-index recursion depth
- * @returns {Promise<string[]>}
+ * @returns {Promise<Array<{url:string,lastmod:string}>>}
  */
-export async function collectSitemapUrls(baseUrl, { shouldStop, maxDepth = 4 } = {}) {
+export async function collectSitemapEntries(baseUrl, { shouldStop, maxDepth = 4 } = {}) {
   const origin = originOf(baseUrl);
   if (!origin) return [];
 
@@ -41,7 +57,7 @@ export async function collectSitemapUrls(baseUrl, { shouldStop, maxDepth = 4 } =
 
   const parser = new XMLParser({ ignoreAttributes: true, trimValues: true });
   const seen = new Set();
-  const urls = new Set();
+  const entries = new Map(); // url -> lastmod (first wins)
 
   async function walk(smUrl, depth) {
     if (depth > maxDepth || seen.has(smUrl)) return;
@@ -63,8 +79,8 @@ export async function collectSitemapUrls(baseUrl, { shouldStop, maxDepth = 4 } =
         if (sm && sm.loc) await walk(String(sm.loc).trim(), depth + 1);
       }
     } else if (xml.urlset) {
-      for (const u of toArray(xml.urlset.url)) {
-        if (u && u.loc) urls.add(String(u.loc).trim());
+      for (const e of sitemapEntriesFromXml(xml)) {
+        if (!entries.has(e.url)) entries.set(e.url, e.lastmod);
       }
     }
   }
@@ -74,5 +90,30 @@ export async function collectSitemapUrls(baseUrl, { shouldStop, maxDepth = 4 } =
     await walk(c, 0);
   }
 
-  return [...urls];
+  return [...entries].map(([url, lastmod]) => ({ url, lastmod }));
+}
+
+/**
+ * Collect all page URLs reachable from a site's sitemaps.
+ * @param {string} baseUrl
+ * @param {object} [opts]
+ * @returns {Promise<string[]>}
+ */
+export async function collectSitemapUrls(baseUrl, opts = {}) {
+  return (await collectSitemapEntries(baseUrl, opts)).map((e) => e.url);
+}
+
+/**
+ * #6 — a Map of normalizedUrl -> <lastmod> for a site's sitemap. Only URLs that
+ * actually carry a lastmod are included (a blank one is no freshness evidence).
+ * @param {string} baseUrl
+ * @param {object} [opts]
+ * @returns {Promise<Map<string,string>>}
+ */
+export async function sitemapLastmodMap(baseUrl, opts = {}) {
+  const map = new Map();
+  for (const e of await collectSitemapEntries(baseUrl, opts)) {
+    if (e.lastmod) map.set(normalizeUrl(e.url) || e.url, e.lastmod);
+  }
+  return map;
 }

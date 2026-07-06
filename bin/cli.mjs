@@ -111,6 +111,11 @@ Options:
   --near-dup-hamming <n> collapse near-duplicate pages ACROSS different paths within
                          this SimHash Hamming distance (default: ${DEFAULT_OPTIONS.nearDupHamming} = off).
                          Opt-in: content similarity alone can drop a real page
+  --incremental          re-crawl only what changed: reuse pages whose sitemap
+                         <lastmod> is unchanged since the last --incremental run of the
+                         same target (skips render+reveal). Conservative — any doubt
+                         re-crawls, so a change is never skipped. Implies saving; the
+                         first run establishes the baseline
   --port <n>             port for \`serve\` (default: 4000)
 
 Reshape (Phase 2 — over a saved run):
@@ -162,6 +167,7 @@ const OPTION_CONFIG = {
   'per-document': { type: 'boolean' },
   'near-dup-hamming': { type: 'string' },
   'mirror-hamming': { type: 'string' },
+  incremental: { type: 'boolean' },
   port: { type: 'string' },
   ask: { type: 'string' },
   scan: { type: 'string' },
@@ -221,6 +227,7 @@ function optionsFromFlags(values) {
   if (values['per-document']) o.perDocument = true;
   if (values['near-dup-hamming'] != null) o.nearDupHamming = Number(values['near-dup-hamming']);
   if (values['mirror-hamming'] != null) o.mirrorHamming = Number(values['mirror-hamming']);
+  if (values.incremental) o.incremental = true;
   if (values.task && values.task.length === 1) o.task = values.task[0];
   return o;
 }
