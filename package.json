@@ -32,7 +32,7 @@
     }
   },
   "bin": {
-    "crawldna": "./bin/cli.mjs"
+    "crawldna": "bin/cli.mjs"
   },
   "files": [
     "src",

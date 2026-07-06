@@ -89,7 +89,16 @@ above and run `npm run serve` (see [Web UI](#web-ui)).
   ```
 
 `playwright` is an `optionalDependency` and is lazy-loaded only when a crawl
-actually needs the browser.
+actually needs the browser — so the reveal engine works out of the box. If you
+only use the static path (a docs site's `llms-full.txt` / sitemap) and want to
+skip the ~50 MB download, install without it:
+
+```sh
+npm install crawldna --omit=optional
+```
+
+Crawls that need the browser then print a one-line hint to run
+`npm install playwright && npx playwright install chromium`.
 
 ## CLI
 

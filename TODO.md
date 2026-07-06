@@ -113,7 +113,7 @@ la modifica e confrontare numero di pagine tenute, byte totali, e i blocchi rive
 | 12 | Harness di misurazione (completezza / rispetto-task / token) | trasversale — abilita tutto | Medio | ✅ fatto (2026-07-01, da verificare dal vivo) |
 | 24 | Fedeltà di layout dell'.md (varianti in posizione, link esterni, indentazione) | precisione output — leggibilità | Medio | ✅ fatto (2026-07-04) |
 | 25 | App incorporate: viste raggiunte (nav-in-main), budget protetto (futility guard), liste/tabelle leggibili | precisione reveal + leggibilità output | Medio | ✅ fatto (2026-07-04) |
-| 26 | Recupero heading per peso visivo (scheletro dell'.md, deterministico) | precisione output — struttura, abilita meglio il reshape | Medio | ☐ da fare |
+| 26 | Recupero heading per peso visivo (scheletro dell'.md, deterministico) | precisione output — struttura, abilita meglio il reshape | Medio | ✅ fatto (2026-07-04, commit d4cf445 + regressione ce1d218) |
 | 28 | Copertura totale dei cliccabili: controlli JS nella chrome (nav/header/footer) | precisione reveal — nessun cliccabile perso | Basso-Medio | ✅ fatto (2026-07-04) |
 | 29 | Reveal "compatto ma strutturato" + record fedele per-stato (`states/`) | precisione output — struttura/contesto tra stati | Medio | ✅ fatto (2026-07-04) |
 
@@ -126,7 +126,7 @@ la modifica e confrontare numero di pagine tenute, byte totali, e i blocchi rive
 | 15 | Render-wait: response-quiet al posto di `networkidle` | tempo (−secondi fissi per pagina) | Basso-Medio | ✅ fatto (2026-07-02, da verificare dal vivo) |
 | 16 | Budget/ranking per le route minate dai JS | consumi (token gate `links`) | Basso | ✅ fatto (2026-07-02, da misurare dal vivo) |
 | 17 | CI GitHub Actions (suite offline a ogni push) | qualità continua | Basso | ✅ fatto (2026-07-02) |
-| 18 | Packaging npm (playwright peer-optional, metadata repo) | fruibilità libreria | Basso | ☐ da fare |
+| 18 | Packaging npm (playwright peer-optional, metadata repo) | fruibilità libreria | Basso | ✅ fatto (2026-07-06) — deps `optional` (scelta b) + escape-hatch `--omit=optional`, dry-run pulito |
 
 **Gruppo D — Architettura esplicita & no-AI** (sessione 2026-07-02; ogni item deve
 rispettare: miglioramento netto qualità/costo/velocità a precisione invariata · usabile
@@ -1199,23 +1199,45 @@ check del PR.
 ---
 
 ## #18 — Packaging npm (playwright peer-optional + metadata)
-**Effetto:** fruibilità come libreria · **Sforzo:** Basso · **Stato:** ☐
+**Effetto:** fruibilità come libreria · **Sforzo:** Basso · **Stato:** ✅ FATTO (2026-07-06)
 
-**Problema oggi.** `playwright` è in `optionalDependencies`: npm lo SCARICA comunque
+> **Implementato (scelta di prodotto b — deps out-of-the-box).** I metadata erano già a
+> posto (il remote GitHub è ora configurato): `repository`/`homepage`/`bugs`/`keywords`
+> presenti in [package.json](package.json). Decisione presa sulla dipendenza Playwright:
+> **resta `optionalDependency`** (non spostata a peer) così il reveal engine — il
+> differenziatore — funziona out-of-the-box su CLI/UI/global install, coerente con "il
+> reveal è il differenziatore, non andare static-first" ([[firebase-perf-and-fixes]]). Il
+> consumer statico attento al peso ha comunque l'escape-hatch **`npm install crawldna
+> --omit=optional`**, ora documentato nel README (sezione Requirements), con la nota che i
+> crawl che servono il browser stampano l'hint per installarlo. Fix packaging: rimosso il
+> `./` iniziale dal path del bin (`./bin/cli.mjs` → `bin/cli.mjs`) che faceva emettere a
+> `npm publish` il warning "bin script name was cleaned / npm pkg fix". La Web UI (`ui/`)
+> è deliberatamente FUORI dal tarball (`files` allowlist) e `crawldna serve` lo rileva e
+> spiega come ottenerla invece di crashare ([bin/cli.mjs:552](bin/cli.mjs)).
+>
+> **Verificato.** `npm publish --dry-run` **pulito** (nessun warning `npm pkg fix`; 37
+> file, ~182 kB; `ui/`/`test/`/`scripts/`/`eval/` esclusi, solo `src`/`bin`/`index.d.ts`/
+> `README`/`LICENSE`). 256/256 test verdi.
+>
+> _Deliberatamente NON fatto:_ passaggio a `peerDependencies` (opzione a) — degraderebbe
+> l'esperienza CLI/global (un secondo `npm install playwright` per il motore reveal); non
+> vale la pena finché il pacchetto non è pubblicato e non emerge un consumer-libreria
+> puramente statico che lo chieda.
+
+**Problema (storico).** `playwright` è in `optionalDependencies`: npm lo SCARICA comunque
 (~50MB) a ogni `npm install crawldna`, anche per un consumer che usa solo la via
-statica/llms-full. Mancano `repository`/`homepage` nel package.json (il remote GitHub
-non è ancora configurato).
+statica/llms-full.
 
-**Proposta.** Decisione di prodotto, due strade documentate:
+**Decisione di prodotto (presa: b).**
 - (a) passare a `peerDependencies` + `peerDependenciesMeta: { playwright: { optional:
   true } }` → install leggero, il README già spiega `npx playwright install chromium`;
-- (b) restare così per l'esperienza out-of-the-box.
-  In ogni caso aggiungere `repository`/`homepage`/`bugs` quando il repo è pubblico.
+- (b) ✅ **scelta** — restare `optionalDependency` per l'esperienza out-of-the-box;
+  chi vuole il pacchetto leggero usa `npm install --omit=optional` (documentato).
 
-**Criterio di accettazione.** Un consumer statico installa crawldna senza scaricare
-Playwright (se si sceglie (a)); `npm publish --dry-run` pulito.
+**Criterio di accettazione.** ✅ `npm publish --dry-run` pulito; il consumer statico può
+installare senza Playwright via `--omit=optional`.
 
-**File:** `package.json`, README (sezione Install).
+**File:** `package.json`, README (sezione Requirements).
 
 ---
 
